@@ -1,0 +1,292 @@
+# HTTP API 文档（按当前工程实现）
+
+更新时间：2026-04-10
+
+## 基础信息
+
+- Base URL：`http://127.0.0.1:9001`
+- 路由前缀：`/api/v1`
+- 当前 API 路由总数：22（`php artisan route:list --path=api`）
+
+## 统一响应结构
+
+成功：
+
+~~~json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {},
+  "trace_id": "uuid"
+}
+~~~
+
+失败（示例）：
+
+~~~json
+{
+  "code": 50000,
+  "message": "internal server error",
+  "trace_id": "uuid"
+}
+~~~
+
+## 测试前准备
+
+先定义变量，后续 curl 可直接复制执行。
+
+~~~bash
+BASE="http://127.0.0.1:9001"
+TG_GID=900001
+TG_UID=900002
+TG_MSG_ID=700001
+LEDGER_ID=1
+~~~
+
+## 健康检查
+
+### GET /healthz
+
+~~~bash
+curl -i "$BASE/healthz"
+~~~
+
+## Group 接口
+
+### GET /api/v1/groups
+
+~~~bash
+curl -sS "$BASE/api/v1/groups"
+~~~
+
+### POST /api/v1/groups
+
+字段规则：
+
+- tg_gid: required, integer, min:1
+- tg_oid: required, integer, min:1
+- is_open: boolean
+- base_currency: string, size:1
+- quote_currency: string, size:1
+- exchange_rate: numeric, gt:0
+- fee_rate: numeric, between:0,100
+- period_point: integer, between:0,23
+- period_duration: integer, min:1
+
+~~~bash
+curl -sS -X POST "$BASE/api/v1/groups" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "tg_gid": 900001,
+    "tg_oid": 900001,
+    "is_open": true,
+    "base_currency": "R",
+    "quote_currency": "U",
+    "exchange_rate": 1,
+    "fee_rate": 0.5,
+    "period_point": 0,
+    "period_duration": 1440
+  }'
+~~~
+
+### GET /api/v1/groups/{tgGid}
+
+~~~bash
+curl -sS "$BASE/api/v1/groups/$TG_GID"
+~~~
+
+### PATCH /api/v1/groups/{tgGid}
+
+~~~bash
+curl -sS -X PATCH "$BASE/api/v1/groups/$TG_GID" \
+  -H 'Content-Type: application/json' \
+  -d '{"fee_rate":1.25,"period_point":8}'
+~~~
+
+### DELETE /api/v1/groups/{tgGid}
+
+~~~bash
+curl -sS -X DELETE "$BASE/api/v1/groups/$TG_GID"
+~~~
+
+## User 接口
+
+### GET /api/v1/users
+
+~~~bash
+curl -sS "$BASE/api/v1/users"
+~~~
+
+### POST /api/v1/users
+
+字段规则：
+
+- tg_uid: required, integer, min:1
+- tg_username: nullable, string, max:64
+- tg_nickname: nullable, string, max:128
+
+~~~bash
+curl -sS -X POST "$BASE/api/v1/users" \
+  -H 'Content-Type: application/json' \
+  -d '{"tg_uid":900002,"tg_username":"u900002","tg_nickname":"测试用户"}'
+~~~
+
+### GET /api/v1/users/{tgUid}
+
+~~~bash
+curl -sS "$BASE/api/v1/users/$TG_UID"
+~~~
+
+### PATCH /api/v1/users/{tgUid}
+
+~~~bash
+curl -sS -X PATCH "$BASE/api/v1/users/$TG_UID" \
+  -H 'Content-Type: application/json' \
+  -d '{"tg_nickname":"测试用户更新"}'
+~~~
+
+### DELETE /api/v1/users/{tgUid}
+
+~~~bash
+curl -sS -X DELETE "$BASE/api/v1/users/$TG_UID"
+~~~
+
+## Member 接口
+
+### POST /api/v1/members
+
+字段规则：
+
+- tg_gid: required, integer, min:1
+- tg_uid: required, integer, min:1
+- role: required, in:operator,consumer
+- is_active: boolean
+
+~~~bash
+curl -sS -X POST "$BASE/api/v1/members" \
+  -H 'Content-Type: application/json' \
+  -d '{"tg_gid":900001,"tg_uid":900002,"role":"operator","is_active":true}'
+~~~
+
+### GET /api/v1/groups/{tgGid}/members
+
+~~~bash
+curl -sS "$BASE/api/v1/groups/$TG_GID/members"
+~~~
+
+### GET /api/v1/groups/{tgGid}/members/{tgUid}
+
+~~~bash
+curl -sS "$BASE/api/v1/groups/$TG_GID/members/$TG_UID"
+~~~
+
+### PATCH /api/v1/groups/{tgGid}/members/{tgUid}
+
+~~~bash
+curl -sS -X PATCH "$BASE/api/v1/groups/$TG_GID/members/$TG_UID" \
+  -H 'Content-Type: application/json' \
+  -d '{"role":"consumer","is_active":true}'
+~~~
+
+### DELETE /api/v1/groups/{tgGid}/members/{tgUid}
+
+~~~bash
+curl -sS -X DELETE "$BASE/api/v1/groups/$TG_GID/members/$TG_UID"
+~~~
+
+## Ledger 接口
+
+### POST /api/v1/ledgers
+
+字段规则：
+
+- tg_gid: required, integer, min:1
+- tg_uid: required, integer, min:1
+- tg_belong_uid: required, integer, min:1
+- tg_msg_id: required, integer, min:1
+- amount: required, integer（单位：分）
+- is_delete: boolean
+
+~~~bash
+curl -sS -X POST "$BASE/api/v1/ledgers" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "tg_gid":900001,
+    "tg_uid":900002,
+    "tg_belong_uid":900002,
+    "tg_msg_id":700001,
+    "amount":12345,
+    "is_delete":false
+  }'
+~~~
+
+### GET /api/v1/ledgers/{id}
+
+~~~bash
+curl -sS "$BASE/api/v1/ledgers/$LEDGER_ID"
+~~~
+
+### PATCH /api/v1/ledgers/{id}
+
+~~~bash
+curl -sS -X PATCH "$BASE/api/v1/ledgers/$LEDGER_ID" \
+  -H 'Content-Type: application/json' \
+  -d '{"amount":22345}'
+~~~
+
+### DELETE /api/v1/ledgers/{id}
+
+~~~bash
+curl -sS -X DELETE "$BASE/api/v1/ledgers/$LEDGER_ID"
+~~~
+
+### PATCH /api/v1/ledgers/{id}/soft-delete
+
+~~~bash
+curl -sS -X PATCH "$BASE/api/v1/ledgers/$LEDGER_ID/soft-delete" \
+  -H 'Content-Type: application/json' \
+  -d '{"is_delete":true}'
+~~~
+
+### GET /api/v1/groups/{tgGid}/ledgers
+
+~~~bash
+curl -sS "$BASE/api/v1/groups/$TG_GID/ledgers"
+~~~
+
+### POST /api/v1/ledger/ingest
+
+字段规则：
+
+- tg_gid: required, integer, min:1
+- tg_uid: required, integer, min:1
+- tg_belong_uid: required, integer, min:1
+- tg_msg_id: required, integer, min:1
+- exchange_rate: nullable, numeric, gt:0
+- fee_rate: nullable, numeric, between:0,100
+- amount_yuan: required, numeric（单位：元）
+
+~~~bash
+curl -sS -X POST "$BASE/api/v1/ledger/ingest" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "tg_gid":900001,
+    "tg_uid":900002,
+    "tg_belong_uid":900002,
+    "tg_msg_id":700002,
+    "exchange_rate":1,
+    "fee_rate":0.2,
+    "amount_yuan":12.34
+  }'
+~~~
+
+## 一键全接口测试
+
+工程已内置脚本，可直接覆盖所有 API：
+
+~~~bash
+chmod +x scripts/curl_all_api.sh
+./scripts/curl_all_api.sh
+~~~
+
+脚本位置：`scripts/curl_all_api.sh`

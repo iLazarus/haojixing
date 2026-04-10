@@ -1,0 +1,29 @@
+# Laravel
+/vendor/
+/node_modules/
+/public/build/
+/public/hot
+/storage/*.key
+/storage/logs/
+/storage/framework/cache/data/
+/storage/framework/sessions/
+/storage/framework/testing/
+/storage/framework/views/
+/bootstrap/cache/*.php
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Runtime / local artifacts
+.config/
+*.log
+*.pid
+*.sqlite
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
