@@ -3,11 +3,19 @@ SHELL := /bin/bash
 .PHONY: init-perms dev-up dev-down dev-logs debug-up prod-up ps shell-app artisan composer migrate test health validate smoke smoke-verbose
 
 init-perms:
-	mkdir -p storage bootstrap/cache
-	@if [ "$$(podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" = "true" ]; then \
-		podman unshare chown -R $$(id -u):$$(id -g) storage bootstrap/cache; \
+	mkdir -p \
+		storage/logs \
+		storage/framework/cache/data \
+		storage/framework/sessions \
+		storage/framework/views \
+		storage/framework/testing \
+		bootstrap/cache
+	@uid="$${APP_UID:-$$(id -u)}"; gid="$${APP_GID:-$$(id -g)}"; \
+	echo "初始化权限 uid=$$uid gid=$$gid"; \
+	if [ "$$(podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" = "true" ]; then \
+		podman unshare chown -R $$uid:$$gid storage bootstrap/cache; \
 	else \
-		chown -R $$(id -u):$$(id -g) storage bootstrap/cache; \
+		chown -R $$uid:$$gid storage bootstrap/cache; \
 	fi
 
 dev-up:
