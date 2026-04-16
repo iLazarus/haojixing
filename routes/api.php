@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\GroupController;
 use App\Http\Controllers\Api\GroupRuleController;
 use App\Http\Controllers\Api\LedgerController;
 use App\Http\Controllers\Api\MemberController;
+use App\Http\Controllers\Api\RuleEngineController;
 use App\Http\Controllers\Api\RuleController;
 use App\Http\Controllers\Api\UserController;
 use Illuminate\Support\Facades\Route;
@@ -39,6 +40,7 @@ Route::prefix('v1')->group(function (): void {
     Route::post('/groups/{tgGid}/rules', [GroupRuleController::class, 'store']);
     Route::patch('/groups/{tgGid}/rules/{appRuleId}', [GroupRuleController::class, 'update']);
     Route::delete('/groups/{tgGid}/rules/{appRuleId}', [GroupRuleController::class, 'destroy']);
+    Route::post('/groups/{tgGid}/rules/match', [RuleEngineController::class, 'match']);
 
     Route::post('/ledgers', [LedgerController::class, 'store']);
     Route::get('/ledgers/{id}', [LedgerController::class, 'show']);
