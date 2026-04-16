@@ -1,12 +1,12 @@
 # HTTP API 文档（按当前工程实现）
 
-更新时间：2026-04-10
+更新时间：2026-04-16
 
 ## 基础信息
 
 - Base URL：`http://127.0.0.1:9001`
 - 路由前缀：`/api/v1`
-- 当前 API 路由总数：22（`php artisan route:list --path=api`）
+- 当前 API 路由总数：32（`php artisan route:list --path=api`）
 
 ## 统一响应结构
 
@@ -193,6 +193,136 @@ curl -sS -X PATCH "$BASE/api/v1/groups/$TG_GID/members/$TG_UID" \
 ~~~bash
 curl -sS -X DELETE "$BASE/api/v1/groups/$TG_GID/members/$TG_UID"
 ~~~
+
+## Rule 接口
+
+### GET /api/v1/rules
+
+~~~bash
+curl -sS "$BASE/api/v1/rules"
+~~~
+
+### POST /api/v1/rules
+
+字段规则：
+
+- remark: sometimes, string, max:255
+- regular: required, string, max:512，且必须是可用 PCRE
+- api: sometimes, nullable, string, max:2048
+- data_map: sometimes, nullable, string，且必须是合法 JSON 字符串
+- is_active: sometimes, boolean
+
+示例（reply 文本 + API payload 模板）：
+
+~~~bash
+curl -sS -X POST "$BASE/api/v1/rules" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "remark":"金额提取回复",
+    "regular":"/买\\s*(\\d+(?:\\.\\d+)?)/u",
+    "api":null,
+    "data_map":"{\"reply_template\":\"收到金额 {{1}}\",\"api_payload\":{\"amount\":\"{{1}}\",\"from\":\"{{sender}}\"}}",
+    "is_active":true
+  }'
+~~~
+
+### GET /api/v1/rules/{id}
+
+~~~bash
+curl -sS "$BASE/api/v1/rules/$RULE_ID"
+~~~
+
+### PATCH /api/v1/rules/{id}
+
+~~~bash
+curl -sS -X PATCH "$BASE/api/v1/rules/$RULE_ID" \
+  -H 'Content-Type: application/json' \
+  -d '{"remark":"金额提取回复-更新","is_active":true}'
+~~~
+
+### DELETE /api/v1/rules/{id}
+
+~~~bash
+curl -sS -X DELETE "$BASE/api/v1/rules/$RULE_ID"
+~~~
+
+## Group Rule 接口
+
+### GET /api/v1/groups/{tgGid}/rules
+
+~~~bash
+curl -sS "$BASE/api/v1/groups/$TG_GID/rules"
+~~~
+
+### POST /api/v1/groups/{tgGid}/rules
+
+字段规则：
+
+- app_rule_id: required, integer, min:1
+- priority: sometimes, integer, min:0
+- stop_on_match: sometimes, boolean
+- is_active: sometimes, boolean
+
+~~~bash
+curl -sS -X POST "$BASE/api/v1/groups/$TG_GID/rules" \
+  -H 'Content-Type: application/json' \
+  -d '{"app_rule_id":'$RULE_ID',"priority":10,"stop_on_match":true,"is_active":true}'
+~~~
+
+### PATCH /api/v1/groups/{tgGid}/rules/{appRuleId}
+
+~~~bash
+curl -sS -X PATCH "$BASE/api/v1/groups/$TG_GID/rules/$RULE_ID" \
+  -H 'Content-Type: application/json' \
+  -d '{"priority":5,"stop_on_match":true,"is_active":true}'
+~~~
+
+### DELETE /api/v1/groups/{tgGid}/rules/{appRuleId}
+
+~~~bash
+curl -sS -X DELETE "$BASE/api/v1/groups/$TG_GID/rules/$RULE_ID"
+~~~
+
+## Rule Engine 接口
+
+### POST /api/v1/groups/{tgGid}/rules/match
+
+字段规则：
+
+- tg_msg_id: required, integer, min:1
+- message: required, string, min:1, max:5000
+- execute_api: sometimes, boolean（默认 false）
+- context: sometimes, array（可用于模板变量，例如 sender）
+
+首次匹配示例：
+
+~~~bash
+curl -sS -X POST "$BASE/api/v1/groups/$TG_GID/rules/match" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "tg_msg_id":700100,
+    "message":"买 12.34",
+    "execute_api":false,
+    "context":{"sender":"900002"}
+  }'
+~~~
+
+响应重点：`data.hit_count=1`，并在 `data.hits[0].action.reply_text` 中拿到模板渲染结果。
+
+幂等重放示例（同一 tg_msg_id 再次请求）：
+
+~~~bash
+curl -sS -X POST "$BASE/api/v1/groups/$TG_GID/rules/match" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "tg_msg_id":700100,
+    "message":"买 12.34",
+    "execute_api":false,
+    "context":{"sender":"900002"}
+  }'
+~~~
+
+响应重点：`data.hit_count=0`（已命中过同一规则会跳过）。
 
 ## Ledger 接口
 
