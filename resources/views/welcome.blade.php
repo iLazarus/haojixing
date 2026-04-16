@@ -21,6 +21,7 @@
         <p>Web 入口正常可访问。</p>
         <p>健康检查：<a href="/healthz">/healthz</a></p>
         <p>示例 API：<code>/api/v1/groups</code></p>
+        <p>后台管理：<a href="/admin">/admin</a></p>
     </div>
 </div>
 </body>
