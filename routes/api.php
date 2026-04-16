@@ -3,8 +3,10 @@
 declare(strict_types=1);
 
 use App\Http\Controllers\Api\GroupController;
+use App\Http\Controllers\Api\GroupRuleController;
 use App\Http\Controllers\Api\LedgerController;
 use App\Http\Controllers\Api\MemberController;
+use App\Http\Controllers\Api\RuleController;
 use App\Http\Controllers\Api\UserController;
 use Illuminate\Support\Facades\Route;
 
@@ -26,6 +28,17 @@ Route::prefix('v1')->group(function (): void {
     Route::get('/groups/{tgGid}/members/{tgUid}', [MemberController::class, 'show']);
     Route::patch('/groups/{tgGid}/members/{tgUid}', [MemberController::class, 'update']);
     Route::delete('/groups/{tgGid}/members/{tgUid}', [MemberController::class, 'destroy']);
+
+    Route::get('/rules', [RuleController::class, 'index']);
+    Route::post('/rules', [RuleController::class, 'store']);
+    Route::get('/rules/{id}', [RuleController::class, 'show']);
+    Route::patch('/rules/{id}', [RuleController::class, 'update']);
+    Route::delete('/rules/{id}', [RuleController::class, 'destroy']);
+
+    Route::get('/groups/{tgGid}/rules', [GroupRuleController::class, 'index']);
+    Route::post('/groups/{tgGid}/rules', [GroupRuleController::class, 'store']);
+    Route::patch('/groups/{tgGid}/rules/{appRuleId}', [GroupRuleController::class, 'update']);
+    Route::delete('/groups/{tgGid}/rules/{appRuleId}', [GroupRuleController::class, 'destroy']);
 
     Route::post('/ledgers', [LedgerController::class, 'store']);
     Route::get('/ledgers/{id}', [LedgerController::class, 'show']);
