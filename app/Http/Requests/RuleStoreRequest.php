@@ -41,6 +41,7 @@ class RuleStoreRequest extends ApiFormRequest
                 },
             ],
             'is_active' => ['sometimes', 'boolean'],
+            'is_default' => ['sometimes', 'boolean'],
         ];
     }
 }

@@ -41,6 +41,7 @@ class RuleUpdateRequest extends ApiFormRequest
                 },
             ],
             'is_active' => ['sometimes', 'boolean'],
+            'is_default' => ['sometimes', 'boolean'],
         ];
     }
 }

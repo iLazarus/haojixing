@@ -57,6 +57,15 @@ class RuleController extends Controller
 
     public function destroy(Request $request, int $id): JsonResponse
     {
+        $rule = $this->ruleService->findById($id);
+        if ($rule === null) {
+            return $this->error($request, 'rule not found', 404, 40405);
+        }
+
+        if ((bool) ($rule->is_default ?? false)) {
+            return $this->error($request, 'default rule can not be deleted', 422, 42205);
+        }
+
         $deleted = $this->ruleService->deleteById($id);
 
         return $this->success($request, ['deleted' => $deleted]);

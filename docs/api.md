@@ -206,18 +206,15 @@ curl -sS "$BASE/api/v1/rules"
 
 字段规则：
 
-- remark: sometimes, string, max:255
-- regular: required, string, max:512，且必须是可用 PCRE
-- api: sometimes, nullable, string, max:2048
-- data_map: sometimes, nullable, string，且必须是合法 JSON 字符串
-- is_active: sometimes, boolean
+- is_default: sometimes, boolean（默认 false；true 时不可删除）
 
 示例（reply 文本 + API payload 模板）：
 
 ~~~bash
 curl -sS -X POST "$BASE/api/v1/rules" \
   -H 'Content-Type: application/json' \
-  -d '{
+    "is_active":true,
+    "is_default":false
     "remark":"金额提取回复",
     "regular":"/买\\s*(\\d+(?:\\.\\d+)?)/u",
     "api":null,
@@ -241,6 +238,8 @@ curl -sS -X PATCH "$BASE/api/v1/rules/$RULE_ID" \
 ~~~
 
 ### DELETE /api/v1/rules/{id}
+
+说明：当规则 `is_default=true` 时，接口会拒绝删除并返回 422。
 
 ~~~bash
 curl -sS -X DELETE "$BASE/api/v1/rules/$RULE_ID"

@@ -31,6 +31,8 @@ class AppRule extends Model
         'data_map',
         // 规则是否启用
         'is_active',
+        // 是否默认规则（默认规则不可删除）
+        'is_default',
         // 创建日期（Asia/Shanghai，DATE）
         'created_at',
         // 更新日期（Asia/Shanghai，DATE）
@@ -40,5 +42,6 @@ class AppRule extends Model
     /** @var array<string, string> 字段类型转换规则 */
     protected $casts = [
         'is_active' => 'boolean',
+        'is_default' => 'boolean',
     ];
 }

@@ -33,6 +33,7 @@ class RuleService
             'api' => array_key_exists('api', $data) ? (string) $data['api'] : null,
             'data_map' => array_key_exists('data_map', $data) ? (string) $data['data_map'] : null,
             'is_active' => (bool) ($data['is_active'] ?? true),
+            'is_default' => (bool) ($data['is_default'] ?? false),
             'created_at' => $chinaDate,
             'updated_at' => $chinaDate,
         ]);
@@ -49,7 +50,7 @@ class RuleService
             'updated_at' => $this->chinaDate(),
         ];
 
-        foreach (['remark', 'regular', 'api', 'data_map', 'is_active'] as $field) {
+        foreach (['remark', 'regular', 'api', 'data_map', 'is_active', 'is_default'] as $field) {
             if (array_key_exists($field, $data)) {
                 $next[$field] = $data[$field];
             }

@@ -421,14 +421,14 @@
         },
         rules: {
             label: 'Rule',
-            columns: ['id', 'remark', 'regular', 'api', 'is_active', 'updated_at'],
+            columns: ['id', 'remark', 'regular', 'api', 'is_active', 'is_default', 'updated_at'],
             listPath: '/api/v1/rules',
             createPath: () => '/api/v1/rules',
             updatePath: (f) => `/api/v1/rules/${f.id}`,
             deletePath: (f) => `/api/v1/rules/${f.id}`,
-            createFields: ['remark', 'regular', 'api', 'data_map', 'is_active'],
+            createFields: ['remark', 'regular', 'api', 'data_map', 'is_active', 'is_default'],
             createOmitFields: [],
-            updateFields: ['id', 'remark', 'regular', 'api', 'data_map', 'is_active']
+            updateFields: ['id', 'remark', 'regular', 'api', 'data_map', 'is_active', 'is_default']
         },
         groupRules: {
             label: 'GroupRule',
@@ -905,7 +905,14 @@
             delBtn.className = 'btn-danger';
             delBtn.type = 'button';
             delBtn.textContent = '删除';
-            delBtn.addEventListener('click', () => renderDeleteModal(currentPageRows[idx] || {}));
+            const rowData = currentPageRows[idx] || {};
+            if (activeKey === 'rules' && Boolean(rowData.is_default)) {
+                delBtn.disabled = true;
+                delBtn.title = '默认规则不可删除';
+                delBtn.style.background = '#9ca3af';
+            } else {
+                delBtn.addEventListener('click', () => renderDeleteModal(rowData));
+            }
 
             const editBtn = document.createElement('button');
             editBtn.className = 'btn-sub';

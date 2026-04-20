@@ -26,8 +26,18 @@ class TelegramWebhookController extends Controller
             return $this->ignored('invalid_payload');
         }
 
-        $createdGroupId = $this->syncGroupWhenBotAdded($payload);
-        $memberChangedGroupId = $this->extractMemberChangedGroupId($payload);
+        $createdGroupContext = $this->syncGroupWhenBotAdded($payload);
+        $createdGroupId = $createdGroupContext['tg_gid'] ?? null;
+        $memberChangedContext = $this->extractMemberChangedContext($payload);
+        $memberChangedGroupId = $memberChangedContext['tg_gid'] ?? null;
+        $memberChangedCreatedContext = null;
+
+        if ($memberChangedContext !== null && $memberChangedGroupId !== $createdGroupId) {
+            $ensureResult = $this->ensureGroupExists($memberChangedContext, 'member_changed');
+            if ($ensureResult === 'created') {
+                $memberChangedCreatedContext = $memberChangedContext;
+            }
+        }
 
         if ($createdGroupId !== null) {
             $this->syncUsersWhenGroupMemberChanged($createdGroupId, $payload);
@@ -35,6 +45,12 @@ class TelegramWebhookController extends Controller
 
         if ($memberChangedGroupId !== null && $memberChangedGroupId !== $createdGroupId) {
             $this->syncUsersWhenGroupMemberChanged($memberChangedGroupId, $payload);
+        }
+
+        if ($createdGroupContext !== null) {
+            $this->sendGroupRefreshNotice($createdGroupContext);
+        } elseif ($memberChangedCreatedContext !== null) {
+            $this->sendGroupRefreshNotice($memberChangedCreatedContext);
         }
 
         $chatId = $this->extractChatId($payload);
@@ -73,53 +89,122 @@ class TelegramWebhookController extends Controller
         ]);
     }
 
-    private function syncGroupWhenBotAdded(array $payload): ?int
+    private function syncGroupWhenBotAdded(array $payload): ?array
     {
         $context = $this->extractBotJoinContext($payload);
         if ($context === null) {
             return null;
         }
 
+        $result = $this->ensureGroupExists($context, 'bot_added');
+
+        return $result === 'created' ? $context : null;
+    }
+
+    private function sendGroupRefreshNotice(array $context): void
+    {
+        $tgGid = $this->toIntOrNull($context['tg_gid'] ?? null);
+        if ($tgGid === null || $tgGid === 0) {
+            return;
+        }
+
+        $token = (string) config('services.telegram.bot_token', '');
+        if ($token === '') {
+            Log::channel('stderr')->warning('telegram_bot_token_missing_for_group_refresh_notice', [
+                'tg_gid' => $tgGid,
+            ]);
+
+            return;
+        }
+
+        $groupName = trim((string) ($context['chat_title'] ?? ''));
+        if ($groupName === '') {
+            $groupName = (string) $tgGid;
+        }
+
+        $text = "机器人已经刷新了'{$groupName}' 的成员和群配置信息";
+        $response = Http::timeout(10)->asJson()->post("https://api.telegram.org/bot{$token}/sendMessage", [
+            'chat_id' => $tgGid,
+            'text' => $text,
+        ]);
+
+        if (!$response->ok()) {
+            Log::channel('stderr')->warning('group_refresh_notice_send_failed', [
+                'tg_gid' => $tgGid,
+                'status' => $response->status(),
+                'body' => mb_substr((string) $response->body(), 0, 500),
+            ]);
+        }
+    }
+
+    private function ensureGroupExists(array $context, string $scene): string
+    {
+        $tgGid = $this->toIntOrNull($context['tg_gid'] ?? null);
+        if ($tgGid === null || $tgGid === 0) {
+            Log::channel('stderr')->warning('group_sync_invalid_tg_gid', [
+                'scene' => $scene,
+                'tg_gid' => $context['tg_gid'] ?? null,
+                'update_id' => $context['update_id'] ?? null,
+            ]);
+
+            return 'failed';
+        }
+
         $checkResponse = $this->callInternalJsonApi('GET', '/api/v1/groups/' . $context['tg_gid']);
         if ($checkResponse['status'] === 200) {
-            return null;
+            return 'exists';
         }
 
         if ($checkResponse['status'] !== 404) {
             Log::channel('stderr')->warning('group_sync_check_failed', [
+                'scene' => $scene,
                 'tg_gid' => $context['tg_gid'],
                 'status' => $checkResponse['status'],
                 'body' => mb_substr($checkResponse['body'], 0, 500),
             ]);
 
-            return null;
+            return 'failed';
+        }
+
+        $tgOid = $this->toIntOrNull($context['tg_oid'] ?? null);
+        if ($tgOid === null || $tgOid <= 0) {
+            Log::channel('stderr')->warning('group_sync_skipped_missing_tg_oid', [
+                'scene' => $scene,
+                'tg_gid' => $context['tg_gid'],
+                'tg_oid' => $context['tg_oid'] ?? null,
+                'update_id' => $context['update_id'] ?? null,
+            ]);
+
+            return 'failed';
         }
 
         $createResponse = $this->callInternalJsonApi('POST', '/api/v1/groups', [
             'tg_gid' => $context['tg_gid'],
-            'tg_oid' => $context['tg_oid'],
+            'tg_oid' => $tgOid,
         ]);
 
         if ($createResponse['status'] < 200 || $createResponse['status'] >= 300) {
             Log::channel('stderr')->warning('group_sync_create_failed', [
+                'scene' => $scene,
                 'tg_gid' => $context['tg_gid'],
-                'tg_oid' => $context['tg_oid'],
+                'tg_oid' => $tgOid,
                 'status' => $createResponse['status'],
                 'body' => mb_substr($createResponse['body'], 0, 500),
             ]);
 
-            return null;
+            return 'failed';
         }
 
         Log::channel('stderr')->info('group_auto_created_from_webhook', [
+            'scene' => $scene,
             'tg_gid' => $context['tg_gid'],
-            'tg_oid' => $context['tg_oid'],
+            'tg_oid' => $tgOid,
             'chat_title' => $context['chat_title'],
             'chat_type' => $context['chat_type'],
             'update_id' => $context['update_id'],
         ]);
 
-        return $context['tg_gid'];
+        return 'created';
     }
 
     private function syncUsersWhenGroupMemberChanged(int $tgGid, array $payload): void
@@ -346,7 +431,7 @@ class TelegramWebhookController extends Controller
         $users[$tgUid] = $telegramUser;
     }
 
-    private function extractMemberChangedGroupId(array $payload): ?int
+    private function extractMemberChangedContext(array $payload): ?array
     {
         $message = is_array($payload['message'] ?? null) ? $payload['message'] : null;
         if ($message !== null) {
@@ -356,7 +441,13 @@ class TelegramWebhookController extends Controller
                 $hasJoin = is_array($message['new_chat_members'] ?? null) && $message['new_chat_members'] !== [];
                 $hasLeave = is_array($message['left_chat_member'] ?? null);
                 if ($hasJoin || $hasLeave) {
-                    return $this->toIntOrNull($chat['id'] ?? null);
+                    return [
+                        'tg_gid' => $this->toIntOrNull($chat['id'] ?? null),
+                        'tg_oid' => $this->toIntOrNull($message['from']['id'] ?? null),
+                        'chat_title' => is_string($chat['title'] ?? null) ? (string) $chat['title'] : '',
+                        'chat_type' => $chatType,
+                        'update_id' => $this->toIntOrNull($payload['update_id'] ?? null),
+                    ];
                 }
             }
         }
@@ -369,7 +460,13 @@ class TelegramWebhookController extends Controller
                 $oldStatus = is_string($chatMember['old_chat_member']['status'] ?? null) ? (string) $chatMember['old_chat_member']['status'] : '';
                 $newStatus = is_string($chatMember['new_chat_member']['status'] ?? null) ? (string) $chatMember['new_chat_member']['status'] : '';
                 if ($oldStatus !== $newStatus) {
-                    return $this->toIntOrNull($chat['id'] ?? null);
+                    return [
+                        'tg_gid' => $this->toIntOrNull($chat['id'] ?? null),
+                        'tg_oid' => $this->toIntOrNull($chatMember['from']['id'] ?? null),
+                        'chat_title' => is_string($chat['title'] ?? null) ? (string) $chat['title'] : '',
+                        'chat_type' => $chatType,
+                        'update_id' => $this->toIntOrNull($payload['update_id'] ?? null),
+                    ];
                 }
             }
         }
@@ -382,7 +479,13 @@ class TelegramWebhookController extends Controller
                 $oldStatus = is_string($myChatMember['old_chat_member']['status'] ?? null) ? (string) $myChatMember['old_chat_member']['status'] : '';
                 $newStatus = is_string($myChatMember['new_chat_member']['status'] ?? null) ? (string) $myChatMember['new_chat_member']['status'] : '';
                 if ($oldStatus !== $newStatus) {
-                    return $this->toIntOrNull($chat['id'] ?? null);
+                    return [
+                        'tg_gid' => $this->toIntOrNull($chat['id'] ?? null),
+                        'tg_oid' => $this->toIntOrNull($myChatMember['from']['id'] ?? null),
+                        'chat_title' => is_string($chat['title'] ?? null) ? (string) $chat['title'] : '',
+                        'chat_type' => $chatType,
+                        'update_id' => $this->toIntOrNull($payload['update_id'] ?? null),
+                    ];
                 }
             }
         }
