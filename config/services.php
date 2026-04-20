@@ -38,6 +38,7 @@ return [
     'telegram' => [
         'bot_token' => env('TELEGRAM_BOT_TOKEN'),
         'bot_id' => env('TELEGRAM_BOT_ID'),
+        'api_resolve_ip' => env('TELEGRAM_API_RESOLVE_IP', ''),
         'webhook_secret' => env('TELEGRAM_WEBHOOK_SECRET'),
     ],
 

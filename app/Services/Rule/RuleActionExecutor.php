@@ -49,7 +49,7 @@ class RuleActionExecutor
 
         $payload = is_array($action['api_payload'] ?? null) ? $action['api_payload'] : [];
 
-        $response = Http::timeout(5)->asJson()->post($url, $payload);
+        $response = Http::connectTimeout(1)->timeout(2)->asJson()->post($url, $payload);
 
         return [
             'status' => $response->status(),

@@ -519,7 +519,7 @@
             return null;
         }
 
-        if (['is_open', 'is_active', 'stop_on_match', 'is_delete', 'execute_api'].includes(key)) {
+        if (['is_open', 'is_active', 'is_default', 'stop_on_match', 'is_delete', 'execute_api'].includes(key)) {
             return ['1', 'true', 'yes', 'on'].includes(String(val).toLowerCase());
         }
 
@@ -657,7 +657,7 @@
         label.textContent = key.replace(/_/g, ' ');
         wrap.appendChild(label);
 
-        if (['is_open', 'is_active', 'stop_on_match', 'is_delete', 'execute_api'].includes(key)) {
+        if (['is_open', 'is_active', 'is_default', 'stop_on_match', 'is_delete', 'execute_api'].includes(key)) {
             const select = document.createElement('select');
             select.name = `${prefix}_${key}`;
 
@@ -1024,13 +1024,7 @@
     closeModalBtn.addEventListener('click', closeModal);
     modalMask.addEventListener('click', (e) => {
         if (e.target === modalMask) {
-            closeModal();
-        }
-    });
-
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && modalMask.classList.contains('show')) {
-            closeModal();
+            notify('warn', '请使用弹窗内的关闭或取消按钮。');
         }
     });
 

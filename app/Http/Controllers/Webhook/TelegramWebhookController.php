@@ -12,6 +12,7 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class TelegramWebhookController extends Controller
 {
@@ -21,10 +22,18 @@ class TelegramWebhookController extends Controller
 
     public function handle(Request $request): JsonResponse
     {
-        $payload = $this->readPayload($request);
-        if ($payload === null || $payload === []) {
-            return $this->ignored('invalid_payload');
-        }
+        Log::channel('stderr')->info('telegram_webhook_handle_enter', [
+            'content_type' => (string) $request->header('Content-Type', ''),
+            'content_length' => (int) $request->server('CONTENT_LENGTH', 0),
+            'user_agent' => (string) $request->header('User-Agent', ''),
+            'raw_preview' => mb_substr((string) $request->getContent(), 0, 500),
+        ]);
+
+        try {
+            $payload = $this->readPayload($request);
+            if ($payload === null || $payload === []) {
+                return $this->ignored('invalid_payload');
+            }
 
         $createdGroupContext = $this->syncGroupWhenBotAdded($payload);
         $createdGroupId = $createdGroupContext['tg_gid'] ?? null;
@@ -53,40 +62,130 @@ class TelegramWebhookController extends Controller
             $this->sendGroupRefreshNotice($memberChangedCreatedContext);
         }
 
-        $chatId = $this->extractChatId($payload);
-        if ($chatId === null) {
-            return $this->ignored('missing_chat_id', [
+        [$message, $updateType] = $this->extractMessage($payload);
+        Log::channel('stderr')->info('telegram_webhook_received', [
+            'update_id' => $this->toIntOrNull($payload['update_id'] ?? null),
+            'update_type' => $updateType,
+            'update_keys' => array_keys($payload),
+        ]);
+
+        if ($message === null) {
+            return $this->ignored('unsupported_update', [
                 'update_id' => $this->toIntOrNull($payload['update_id'] ?? null),
-                'update_keys' => array_keys($payload),
+                'update_type' => $updateType,
             ]);
         }
 
-        $token = (string) config('services.telegram.bot_token', '');
-        if ($token === '') {
-            Log::channel('stderr')->warning('telegram_bot_token_missing');
+        $chat = is_array($message['chat'] ?? null) ? $message['chat'] : null;
+        if ($chat === null) {
+            return $this->ignored('missing_chat');
+        }
+
+        $chatType = is_string($chat['type'] ?? null) ? strtolower(trim((string) $chat['type'])) : '';
+        if (!in_array($chatType, ['group', 'supergroup'], true)) {
+            return $this->ignored('not_group_chat', [
+                'chat_type' => $chatType,
+                'chat_id' => $this->toIntOrNull($chat['id'] ?? null),
+            ]);
+        }
+
+        $tgMsgId = $this->toIntOrNull($message['message_id'] ?? null);
+        if ($tgMsgId === null || $tgMsgId <= 0) {
+            return $this->ignored('invalid_message_id', [
+                'message_id_raw' => $message['message_id'] ?? null,
+            ]);
+        }
+
+        $text = $this->pickMessageText($message);
+        if ($text === null || trim($text) === '') {
+            return $this->ignored('empty_text', [
+                'chat_id' => $this->toIntOrNull($chat['id'] ?? null),
+                'tg_msg_id' => $tgMsgId,
+            ]);
+        }
+
+        $rawGroupId = $this->toIntOrNull($chat['id'] ?? null);
+        if ($rawGroupId === null) {
+            return $this->ignored('invalid_group_id', [
+                'chat_id_raw' => $chat['id'] ?? null,
+            ]);
+        }
+
+        $context = [
+            'sender' => is_array($message['from'] ?? null) ? (string) ($message['from']['username'] ?? $message['from']['first_name'] ?? '') : '',
+            'tg_uid' => $this->toIntOrNull($message['from']['id'] ?? null),
+            'chat_type' => $chatType,
+            'chat_title' => is_string($chat['title'] ?? null) ? (string) $chat['title'] : '',
+            'update_id' => $this->toIntOrNull($payload['update_id'] ?? null),
+        ];
+
+        $this->logIncomingGroupMessage($rawGroupId, $tgMsgId, $text, $context);
+
+        $groupIds = $this->resolveGroupIds($rawGroupId);
+        $result = null;
+
+        foreach ($groupIds as $tgGid) {
+            $result = $this->ruleMatchingService->match(
+                $tgGid,
+                $tgMsgId,
+                $text,
+                true,
+                $context
+            );
+
+            if (((int) ($result['hit_count'] ?? 0)) > 0) {
+                Log::channel('stderr')->info('telegram_rule_match_group_hit', [
+                    'raw_group_id' => $rawGroupId,
+                    'matched_group_id' => $tgGid,
+                    'tg_msg_id' => $tgMsgId,
+                    'hit_count' => (int) ($result['hit_count'] ?? 0),
+                ]);
+                break;
+            }
+        }
+
+        $replyText = $this->extractReplyTextFromMatchResult($result);
+        Log::channel('stderr')->info('telegram_rule_match_result', [
+            'tg_gid' => $rawGroupId,
+            'tg_msg_id' => $tgMsgId,
+            'text_preview' => mb_substr($text, 0, 120),
+            'candidate_group_ids' => $groupIds,
+            'hit_count' => (int) ($result['hit_count'] ?? 0),
+            'reply_ready' => $replyText !== null && trim($replyText) !== '',
+            'reply_preview' => is_string($replyText) ? mb_substr($replyText, 0, 120) : null,
+        ]);
+
+        if ($replyText !== null && trim($replyText) !== '') {
+            $this->sendTelegramTextMessage($rawGroupId, $replyText, 'rule_reply');
+        } else {
+            Log::channel('stderr')->info('telegram_rule_reply_skipped', [
+                'tg_gid' => $rawGroupId,
+                'tg_msg_id' => $tgMsgId,
+                'reason' => ((int) ($result['hit_count'] ?? 0)) > 0 ? 'hit_without_reply_text' : 'no_rule_hit',
+            ]);
+        }
 
             return response()->json([
-                'ok' => false,
-                'error' => 'telegram_bot_token_missing',
-            ], 500);
-        }
+                'ok' => true,
+                'matched' => (int) ($result['hit_count'] ?? 0),
+                'replied' => $replyText !== null && trim($replyText) !== '',
+                'data' => $result,
+            ]);
+        } catch (Throwable $e) {
+            Log::channel('stderr')->error('telegram_webhook_handle_exception', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace_preview' => mb_substr($e->getTraceAsString(), 0, 1500),
+                'content_type' => (string) $request->header('Content-Type', ''),
+                'content_length' => (int) $request->server('CONTENT_LENGTH', 0),
+            ]);
 
-        $response = Http::timeout(10)->asJson()->post("https://api.telegram.org/bot{$token}/sendMessage", [
-            'chat_id' => $chatId,
-            'text' => 'get',
-        ]);
-
-        if (!$response->ok()) {
-            Log::channel('stderr')->warning('telegram_send_message_failed', [
-                'chat_id' => $chatId,
-                'status' => $response->status(),
-                'body' => mb_substr((string) $response->body(), 0, 500),
+            return response()->json([
+                'ok' => true,
+                'ignored' => 'internal_error',
             ]);
         }
-
-        return response()->json([
-            'ok' => true,
-        ]);
     }
 
     private function syncGroupWhenBotAdded(array $payload): ?array
@@ -108,33 +207,110 @@ class TelegramWebhookController extends Controller
             return;
         }
 
-        $token = (string) config('services.telegram.bot_token', '');
-        if ($token === '') {
-            Log::channel('stderr')->warning('telegram_bot_token_missing_for_group_refresh_notice', [
-                'tg_gid' => $tgGid,
-            ]);
-
-            return;
-        }
-
         $groupName = trim((string) ($context['chat_title'] ?? ''));
         if ($groupName === '') {
             $groupName = (string) $tgGid;
         }
 
         $text = "机器人已经刷新了'{$groupName}' 的成员和群配置信息";
-        $response = Http::timeout(10)->asJson()->post("https://api.telegram.org/bot{$token}/sendMessage", [
-            'chat_id' => $tgGid,
-            'text' => $text,
-        ]);
+        $this->sendTelegramTextMessage($tgGid, $text, 'group_refresh_notice');
+    }
+
+    private function extractReplyTextFromMatchResult(?array $result): ?string
+    {
+        if (!is_array($result)) {
+            return null;
+        }
+
+        $hits = $result['hits'] ?? null;
+        if (!is_array($hits) || $hits === []) {
+            return null;
+        }
+
+        foreach ($hits as $hit) {
+            if (!is_array($hit)) {
+                continue;
+            }
+
+            $action = is_array($hit['action'] ?? null) ? $hit['action'] : null;
+            if ($action === null) {
+                continue;
+            }
+
+            $replyText = $action['reply_text'] ?? null;
+            if (is_string($replyText) && trim($replyText) !== '') {
+                return $replyText;
+            }
+        }
+
+        return null;
+    }
+
+    private function sendTelegramTextMessage(int $chatId, string $text, string $scene): bool
+    {
+        $token = (string) config('services.telegram.bot_token', '');
+        if ($token === '') {
+            Log::channel('stderr')->warning('telegram_bot_token_missing', [
+                'scene' => $scene,
+                'chat_id' => $chatId,
+            ]);
+
+            return false;
+        }
+
+        $resolveIp = trim((string) config('services.telegram.api_resolve_ip', ''));
+
+        $curlOptions = [];
+        if (defined('CURLOPT_DNS_CACHE_TIMEOUT')) {
+            $curlOptions[CURLOPT_DNS_CACHE_TIMEOUT] = 300;
+        }
+        if (defined('CURLOPT_IPRESOLVE') && defined('CURL_IPRESOLVE_V4')) {
+            $curlOptions[CURLOPT_IPRESOLVE] = CURL_IPRESOLVE_V4;
+        }
+        if ($resolveIp !== '' && defined('CURLOPT_RESOLVE')) {
+            $curlOptions[CURLOPT_RESOLVE] = ["api.telegram.org:443:{$resolveIp}"];
+        }
+
+        try {
+            // DNS 抖动时优先复用 DNS 缓存，并允许可选固定解析 IP 绕过系统 DNS。
+            $response = Http::withOptions(['curl' => $curlOptions])
+                ->connectTimeout(3)
+                ->timeout(5)
+                ->retry(2, 120)
+                ->asJson()
+                ->post("https://api.telegram.org/bot{$token}/sendMessage", [
+                    'chat_id' => $chatId,
+                    'text' => $text,
+                ]);
+        } catch (Throwable $e) {
+            Log::channel('stderr')->warning('telegram_send_message_exception', [
+                'scene' => $scene,
+                'chat_id' => $chatId,
+                'resolve_ip' => $resolveIp !== '' ? $resolveIp : null,
+                'error' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
 
         if (!$response->ok()) {
-            Log::channel('stderr')->warning('group_refresh_notice_send_failed', [
-                'tg_gid' => $tgGid,
+            Log::channel('stderr')->warning('telegram_send_message_failed', [
+                'scene' => $scene,
+                'chat_id' => $chatId,
                 'status' => $response->status(),
                 'body' => mb_substr((string) $response->body(), 0, 500),
             ]);
+
+            return false;
         }
+
+        Log::channel('stderr')->info('telegram_send_message_success', [
+            'scene' => $scene,
+            'chat_id' => $chatId,
+            'text_preview' => mb_substr($text, 0, 120),
+        ]);
+
+        return true;
     }
 
     private function ensureGroupExists(array $context, string $scene): string
