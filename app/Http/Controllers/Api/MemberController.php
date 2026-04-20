@@ -28,7 +28,7 @@ class MemberController extends Controller
         return $this->success($request, $data);
     }
 
-    public function show(int $tgGid, int $tgUid): JsonResponse
+    public function show(Request $request, int $tgGid, int $tgUid): JsonResponse
     {
         $member = $this->memberService->findOne($tgGid, $tgUid);
         if ($member === null) {

@@ -32,7 +32,7 @@ class LedgerController extends Controller
         return $this->success($request, $data);
     }
 
-    public function show(int $id): JsonResponse
+    public function show(Request $request, int $id): JsonResponse
     {
         $ledger = $this->ledgerService->findById($id);
         if ($ledger === null) {

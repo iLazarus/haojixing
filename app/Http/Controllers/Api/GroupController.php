@@ -28,7 +28,7 @@ class GroupController extends Controller
         return $this->success($request, $data);
     }
 
-    public function show(int $tgGid): JsonResponse
+    public function show(Request $request, int $tgGid): JsonResponse
     {
         $group = $this->groupService->findByTgGid($tgGid);
         if ($group === null) {

@@ -63,7 +63,7 @@ curl -sS "$BASE/api/v1/groups"
 
 字段规则：
 
-- tg_gid: required, integer, min:1
+- tg_gid: required, integer, not_in:0（支持负数群 ID）
 - tg_oid: required, integer, min:1
 - is_open: boolean
 - base_currency: string, size:1

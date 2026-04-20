@@ -81,10 +81,12 @@ class GroupService
 
     private function assertPayload(array $data): void
     {
-        foreach (['tg_gid', 'tg_oid'] as $key) {
-            if (!isset($data[$key]) || (int) $data[$key] <= 0) {
-                throw new InvalidArgumentException($key . ' 必须为正整数且不能为空');
-            }
+        if (!isset($data['tg_gid']) || (int) $data['tg_gid'] === 0) {
+            throw new InvalidArgumentException('tg_gid 必须为非 0 整数且不能为空');
+        }
+
+        if (!isset($data['tg_oid']) || (int) $data['tg_oid'] <= 0) {
+            throw new InvalidArgumentException('tg_oid 必须为正整数且不能为空');
         }
 
         $feeRate = (float) ($data['fee_rate'] ?? 0);

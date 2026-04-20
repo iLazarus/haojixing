@@ -14,7 +14,7 @@ class GroupStoreRequest extends ApiFormRequest
     public function rules(): array
     {
         return [
-            'tg_gid' => ['required', 'integer', 'min:1'],
+            'tg_gid' => ['required', 'integer', 'not_in:0'],
             'tg_oid' => ['required', 'integer', 'min:1'],
             'is_open' => ['sometimes', 'boolean'],
             'base_currency' => ['sometimes', 'string', 'size:1'],

@@ -28,7 +28,7 @@ class UserController extends Controller
         return $this->success($request, $data);
     }
 
-    public function show(int $tgUid): JsonResponse
+    public function show(Request $request, int $tgUid): JsonResponse
     {
         $user = $this->userService->findByTgUid($tgUid);
         if ($user === null) {
