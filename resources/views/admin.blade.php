@@ -461,6 +461,15 @@
             createFields: ['tg_gid', 'tg_g_name', 'tg_uid', 'tg_nickname', 'tg_belong_uid', 'tg_belong_nickname', 'tg_msg_id', 'amount', 'currency_type', 'is_delete'],
             createOmitFields: [],
             updateFields: ['id', 'amount', 'currency_type', 'tg_g_name', 'tg_nickname', 'tg_belong_nickname', 'is_delete']
+        },
+        tgUpdateInbox: {
+            label: '消息处理台账',
+            readOnly: true,
+            columns: ['id', 'update_id', 'update_type', 'chat_id', 'message_id', 'message_text', 'status', 'result_code', 'process_detail', 'attempt_count', 'received_at', 'processed_at', 'updated_at'],
+            listPath: '/api/v1/tg-update-inbox',
+            createFields: [],
+            createOmitFields: [],
+            updateFields: []
         }
     };
 
@@ -562,7 +571,27 @@
             is_delete: '软删除',
             updated_at: '更新时间',
         },
+        tgUpdateInbox: {
+            actions: '操作',
+            id: 'ID',
+            update_id: 'Update ID',
+            update_type: '更新类型',
+            chat_id: 'Chat ID',
+            message_id: '消息ID',
+            message_text: '原始消息内容',
+            status: '处理状态',
+            result_code: '处理结果',
+            process_detail: '处理明细',
+            attempt_count: '尝试次数',
+            received_at: '接收时间',
+            processed_at: '处理时间',
+            updated_at: '更新时间',
+        },
     };
+
+    function isReadOnlyModule(key = activeKey) {
+        return Boolean(modules[key] && modules[key].readOnly);
+    }
 
     function getColumnTitle(moduleKey, columnKey) {
         const map = columnTitleMap[moduleKey] || {};
@@ -708,6 +737,7 @@
                 currentPage = 1;
                 renderTabs();
                 syncModuleParamUI();
+                syncActionButtons();
                 renderTable([]);
                 renderPager(0);
                 notify('info', `已切换到 ${mod.label}`);
@@ -715,6 +745,12 @@
             });
             tabs.appendChild(btn);
         });
+    }
+
+    function syncActionButtons() {
+        const readOnly = isReadOnlyModule();
+        openCreateBtn.style.display = readOnly ? 'none' : 'inline-flex';
+        openMatchBtn.style.display = activeKey === 'rules' ? 'inline-flex' : 'none';
     }
 
     function syncModuleParamUI() {
@@ -1032,40 +1068,43 @@
     function renderTable(rows) {
         currentPageRows = rows;
         const mod = modules[activeKey];
-        const columns = ['actions', ...mod.columns];
+        const includeActions = !isReadOnlyModule();
+        const columns = includeActions ? ['actions', ...mod.columns] : [...mod.columns];
         headRow.innerHTML = columns.map((c) => `<th>${getColumnTitle(activeKey, c)}</th>`).join('');
 
         bodyRows.innerHTML = '';
         rows.forEach((row, idx) => {
             const tr = document.createElement('tr');
 
-            const actionTd = document.createElement('td');
-            const actionWrap = document.createElement('div');
-            actionWrap.className = 'inline-actions';
+            if (includeActions) {
+                const actionTd = document.createElement('td');
+                const actionWrap = document.createElement('div');
+                actionWrap.className = 'inline-actions';
 
-            const delBtn = document.createElement('button');
-            delBtn.className = 'btn-danger';
-            delBtn.type = 'button';
-            delBtn.textContent = '删除';
-            const rowData = currentPageRows[idx] || {};
-            if (activeKey === 'rules' && Boolean(rowData.is_default)) {
-                delBtn.disabled = true;
-                delBtn.title = '默认规则不可删除';
-                delBtn.style.background = '#9ca3af';
-            } else {
-                delBtn.addEventListener('click', () => renderDeleteModal(rowData));
+                const delBtn = document.createElement('button');
+                delBtn.className = 'btn-danger';
+                delBtn.type = 'button';
+                delBtn.textContent = '删除';
+                const rowData = currentPageRows[idx] || {};
+                if (activeKey === 'rules' && Boolean(rowData.is_default)) {
+                    delBtn.disabled = true;
+                    delBtn.title = '默认规则不可删除';
+                    delBtn.style.background = '#9ca3af';
+                } else {
+                    delBtn.addEventListener('click', () => renderDeleteModal(rowData));
+                }
+
+                const editBtn = document.createElement('button');
+                editBtn.className = 'btn-sub';
+                editBtn.type = 'button';
+                editBtn.textContent = '编辑';
+                editBtn.addEventListener('click', () => renderCrudModal('update', currentPageRows[idx] || {}));
+
+                actionWrap.appendChild(delBtn);
+                actionWrap.appendChild(editBtn);
+                actionTd.appendChild(actionWrap);
+                tr.appendChild(actionTd);
             }
-
-            const editBtn = document.createElement('button');
-            editBtn.className = 'btn-sub';
-            editBtn.type = 'button';
-            editBtn.textContent = '编辑';
-            editBtn.addEventListener('click', () => renderCrudModal('update', currentPageRows[idx] || {}));
-
-            actionWrap.appendChild(delBtn);
-            actionWrap.appendChild(editBtn);
-            actionTd.appendChild(actionWrap);
-            tr.appendChild(actionTd);
 
             mod.columns.forEach((col) => {
                 const td = document.createElement('td');
@@ -1167,6 +1206,10 @@
     });
 
     openCreateBtn.addEventListener('click', () => {
+        if (isReadOnlyModule()) {
+            notify('warn', '当前模块为只读，不支持新增。');
+            return;
+        }
         renderCrudModal('create');
     });
 
@@ -1183,6 +1226,7 @@
 
     renderTabs();
     syncModuleParamUI();
+    syncActionButtons();
     renderPager(0);
     notify('info', '已加载后台页面。');
     void loadList(false);

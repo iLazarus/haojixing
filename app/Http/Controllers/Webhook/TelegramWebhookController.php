@@ -11,12 +11,15 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
 class TelegramWebhookController extends Controller
 {
+    private ?int $currentInboxId = null;
+
     public function __construct(
         private readonly RuleMatchingService $ruleMatchingService,
         private readonly GroupSyncService $groupSyncService,
@@ -25,6 +28,8 @@ class TelegramWebhookController extends Controller
 
     public function handle(Request $request): JsonResponse
     {
+        $this->currentInboxId = null;
+
         Log::channel('stderr')->info('telegram_webhook_handle_enter', [
             'content_type' => (string) $request->header('Content-Type', ''),
             'content_length' => (int) $request->server('CONTENT_LENGTH', 0),
@@ -39,6 +44,7 @@ class TelegramWebhookController extends Controller
             }
 
             $updateId = $this->toIntOrNull($payload['update_id'] ?? null);
+            $this->currentInboxId = $this->recordInboxReceived($payload, $updateId);
             if ($this->isDuplicateUpdate($updateId)) {
                 return $this->ignored('duplicate_update', [
                     'update_id' => $updateId,
@@ -140,6 +146,10 @@ class TelegramWebhookController extends Controller
                 $senderUid = $this->toIntOrNull($message['from']['id'] ?? null);
                 if (!$this->groupSyncService->isGroupOwner($rawGroupId, $senderUid)) {
                     $this->sendTelegramTextMessage($rawGroupId, '仅群主可以执行刷新', 'manual_refresh_forbidden');
+                    $this->markInboxResult('已处理', '刷新被拒绝', null, [
+                        '处理场景' => '手动刷新',
+                        '处理说明' => '发送人不是群主，系统拒绝执行刷新',
+                    ]);
 
                     return response()->json([
                         'ok' => true,
@@ -164,6 +174,11 @@ class TelegramWebhookController extends Controller
                 ]);
 
                 $this->sendTelegramTextMessage($rawGroupId, '已刷新群信息、用户信息和成员信息', 'manual_refresh_done');
+                $this->markInboxResult('已处理', '手动刷新完成', null, [
+                    '处理场景' => '手动刷新',
+                    '处理说明' => '已完成群与成员同步',
+                    '刷新结果' => $syncResult,
+                ]);
 
                 return response()->json([
                     'ok' => true,
@@ -211,12 +226,28 @@ class TelegramWebhookController extends Controller
 
         if ($replyText !== null && trim($replyText) !== '') {
             $this->sendTelegramTextMessage($rawGroupId, $replyText, 'rule_reply');
+            $this->markInboxResult('已处理', '规则命中并已回复', null, [
+                '处理场景' => '规则匹配',
+                '命中规则数' => (int) ($result['hit_count'] ?? 0),
+                '是否发送回复' => '是',
+            ]);
         } else {
             Log::channel('stderr')->info('telegram_rule_reply_skipped', [
                 'tg_gid' => $rawGroupId,
                 'tg_msg_id' => $tgMsgId,
                 'reason' => ((int) ($result['hit_count'] ?? 0)) > 0 ? 'hit_without_reply_text' : 'no_rule_hit',
             ]);
+
+            $this->markInboxResult(
+                '已处理',
+                ((int) ($result['hit_count'] ?? 0)) > 0 ? '规则命中但无需回复' : '未命中任何规则',
+                null,
+                [
+                    '处理场景' => '规则匹配',
+                    '命中规则数' => (int) ($result['hit_count'] ?? 0),
+                    '是否发送回复' => '否',
+                ]
+            );
         }
 
             return response()->json([
@@ -226,6 +257,11 @@ class TelegramWebhookController extends Controller
                 'data' => $result,
             ]);
         } catch (Throwable $e) {
+            $this->markInboxResult('处理失败', '内部异常', $e->getMessage(), [
+                '处理场景' => 'Webhook处理',
+                '处理说明' => '执行过程中发生未捕获异常',
+            ]);
+
             Log::channel('stderr')->error('telegram_webhook_handle_exception', [
                 'error' => $e->getMessage(),
                 'file' => $e->getFile(),
@@ -922,6 +958,25 @@ class TelegramWebhookController extends Controller
 
     private function ignored(string $reason, array $context = []): JsonResponse
     {
+        $status = $reason === 'duplicate_update' ? '重复更新' : '已忽略';
+        $resultText = match ($reason) {
+            'duplicate_update' => '更新重复（去重）',
+            'invalid_payload' => '载荷无效',
+            'unsupported_update' => '不支持的更新类型',
+            'missing_chat' => '缺少聊天上下文',
+            'not_group_chat' => '非群聊消息',
+            'invalid_message_id' => '消息ID无效',
+            'empty_text' => '消息内容为空',
+            'invalid_group_id' => '群ID无效',
+            default => '已忽略',
+        };
+
+        $this->markInboxResult($status, $resultText, null, [
+            '处理场景' => '忽略分支',
+            '忽略原因代码' => $reason,
+            '上下文' => $context,
+        ]);
+
         Log::channel('stderr')->info('telegram_webhook_ignored', array_merge([
             'reason' => $reason,
         ], $context));
@@ -975,6 +1030,106 @@ class TelegramWebhookController extends Controller
 
         // Telegram 可能因为网络抖动重试同一 update_id，这里做短期去重。
         return !Cache::add("telegram:webhook:update:{$updateId}", 1, now()->addMinutes(5));
+    }
+
+    private function recordInboxReceived(array $payload, ?int $updateId): ?int
+    {
+        [$message, $updateType] = $this->extractMessage($payload);
+        $chat = is_array($message['chat'] ?? null) ? $message['chat'] : null;
+        $chatId = $this->toIntOrNull($chat['id'] ?? null);
+        $messageId = $this->toIntOrNull($message['message_id'] ?? null);
+        $messageText = is_array($message) ? $this->pickMessageText($message) : null;
+        $messageText = is_string($messageText) ? mb_substr($messageText, 0, 2000) : null;
+        $payloadText = (string) json_encode($payload, JSON_UNESCAPED_UNICODE);
+        $now = now();
+
+        if ($updateId === null) {
+            return (int) DB::table('tg_update_inbox')->insertGetId([
+                'update_id' => null,
+                'update_type' => $updateType,
+                'chat_id' => $chatId,
+                'message_id' => $messageId,
+                'message_text' => $messageText,
+                'payload' => $payloadText,
+                'status' => '已接收',
+                'result_code' => '',
+                'process_detail' => null,
+                'attempt_count' => 1,
+                'last_error' => null,
+                'received_at' => $now,
+                'processed_at' => null,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
+
+        $exists = DB::table('tg_update_inbox')
+            ->where('update_id', $updateId)
+            ->first();
+
+        if ($exists === null) {
+            return (int) DB::table('tg_update_inbox')->insertGetId([
+                'update_id' => $updateId,
+                'update_type' => $updateType,
+                'chat_id' => $chatId,
+                'message_id' => $messageId,
+                'message_text' => $messageText,
+                'payload' => $payloadText,
+                'status' => '已接收',
+                'result_code' => '',
+                'process_detail' => null,
+                'attempt_count' => 1,
+                'last_error' => null,
+                'received_at' => $now,
+                'processed_at' => null,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
+
+        $nextAttemptCount = (int) ($exists->attempt_count ?? 1) + 1;
+        DB::table('tg_update_inbox')
+            ->where('id', (int) $exists->id)
+            ->update([
+                'update_type' => $updateType,
+                'chat_id' => $chatId,
+                'message_id' => $messageId,
+                'message_text' => $messageText,
+                'payload' => $payloadText,
+                'status' => '已接收',
+                'result_code' => '',
+                'process_detail' => null,
+                'attempt_count' => $nextAttemptCount,
+                'last_error' => null,
+                'received_at' => $now,
+                'processed_at' => null,
+                'updated_at' => $now,
+            ]);
+
+        return (int) $exists->id;
+    }
+
+    private function markInboxResult(string $status, string $resultCode, ?string $lastError = null, ?array $processDetail = null): void
+    {
+        if ($this->currentInboxId === null || $this->currentInboxId <= 0) {
+            return;
+        }
+
+        $detailText = null;
+        if (is_array($processDetail) && $processDetail !== []) {
+            $detailText = (string) json_encode($processDetail, JSON_UNESCAPED_UNICODE);
+        }
+
+        DB::table('tg_update_inbox')
+            ->where('id', $this->currentInboxId)
+            ->update([
+                'status' => $status,
+                'result_code' => $resultCode,
+                'process_detail' => $detailText,
+                'last_error' => $lastError !== null && trim($lastError) !== '' ? '异常信息：' . $lastError : null,
+                'processed_at' => now(),
+                'updated_at' => now(),
+            ]);
     }
 
     private function logIncomingGroupMessage(int $rawGroupId, int $tgMsgId, string $text, array $context): void

@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\LedgerController;
 use App\Http\Controllers\Api\MemberController;
 use App\Http\Controllers\Api\RuleEngineController;
 use App\Http\Controllers\Api\RuleController;
+use App\Http\Controllers\Api\TgUpdateInboxController;
 use App\Http\Controllers\Api\UserController;
 use Illuminate\Support\Facades\Route;
 
@@ -55,4 +56,6 @@ Route::prefix('v1')->group(function (): void {
 
     // 幂等入账接口，仅处理账单写入，不处理 group/user/member 管理。
     Route::post('/ledger/ingest', [LedgerController::class, 'ingest']);
+
+    Route::get('/tg-update-inbox', [TgUpdateInboxController::class, 'index']);
 });
