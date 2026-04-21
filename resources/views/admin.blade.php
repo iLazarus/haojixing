@@ -377,7 +377,7 @@
             <span id="pagerInfo">第 1 / 1 页</span>
         </div>
 
-        <div class="foot">提示：members/groupRules/ledgers 需要先提供 tg_gid。</div>
+        <div class="foot">提示：筛选和分页在当前模块内即时生效。</div>
     </section>
 </div>
 
@@ -421,7 +421,7 @@
         members: {
             label: '成员',
             columns: ['tg_gid', 'tg_g_name', 'tg_uid', 'tg_nickname', 'role', 'is_active', 'updated_at'],
-            listPath: (f) => `/api/v1/members${f.tg_gid ? `?tg_gid=${encodeURIComponent(f.tg_gid)}` : ''}`,
+            listPath: '/api/v1/members',
             createPath: () => '/api/v1/members',
             updatePath: (f) => `/api/v1/groups/${f.tg_gid}/members/${f.tg_uid}`,
             deletePath: (f) => `/api/v1/groups/${f.tg_gid}/members/${f.tg_uid}`,
@@ -443,7 +443,7 @@
         groupRules: {
             label: '群规则',
             columns: ['tg_gid', 'app_rule_id', 'priority', 'stop_on_match', 'is_active', 'updated_at'],
-            listPath: (f) => `/api/v1/group-rules${f.tg_gid ? `?tg_gid=${encodeURIComponent(f.tg_gid)}` : ''}`,
+            listPath: '/api/v1/group-rules',
             createPath: (f) => `/api/v1/groups/${f.tg_gid}/rules`,
             updatePath: (f) => `/api/v1/groups/${f.tg_gid}/rules/${f.app_rule_id}`,
             deletePath: (f) => `/api/v1/groups/${f.tg_gid}/rules/${f.app_rule_id}`,
@@ -454,7 +454,7 @@
         ledgers: {
             label: '账单',
             columns: ['id', 'tg_gid', 'tg_g_name', 'tg_uid', 'tg_nickname', 'tg_belong_uid', 'tg_belong_nickname', 'tg_msg_id', 'amount', 'currency_type', 'is_delete', 'updated_at'],
-            listPath: (f) => `/api/v1/ledgers${f.tg_gid ? `?tg_gid=${encodeURIComponent(f.tg_gid)}` : ''}`,
+            listPath: '/api/v1/ledgers',
             createPath: () => '/api/v1/ledgers',
             updatePath: (f) => `/api/v1/ledgers/${f.id}`,
             deletePath: (f) => `/api/v1/ledgers/${f.id}`,
@@ -599,7 +599,7 @@
     }
 
     function moduleSupportsTgGidFilter(key = activeKey) {
-        return ['members', 'groupRules', 'ledgers'].includes(key);
+        return false;
     }
 
     function getModulePathValue() {
@@ -882,9 +882,6 @@
                 try {
                     const source = readFields('modal', fields);
                     if (mode === 'create') {
-                        if (moduleSupportsTgGidFilter() && !source.tg_gid) {
-                            source.tg_gid = Number(moduleParams.tg_gid || 0);
-                        }
                         const omit = Array.isArray(mod.createOmitFields) ? mod.createOmitFields : [];
                         const payload = pickPayload(source, mod.createFields.filter(k => !omit.includes(k)));
                         const path = typeof mod.createPath === 'function' ? mod.createPath(source) : mod.createPath;

@@ -121,9 +121,14 @@ class TelegramWebhookController extends Controller
             ]);
         }
 
+        $replyToMessage = is_array($message['reply_to_message'] ?? null) ? $message['reply_to_message'] : null;
+        $replyToFrom = is_array($replyToMessage['from'] ?? null) ? $replyToMessage['from'] : null;
+
         $context = [
             'sender' => is_array($message['from'] ?? null) ? (string) ($message['from']['username'] ?? $message['from']['first_name'] ?? '') : '',
             'tg_uid' => $this->toIntOrNull($message['from']['id'] ?? null),
+            'reply_to_tg_uid' => $this->toIntOrNull($replyToFrom['id'] ?? null),
+            'reply_to_sender' => is_array($replyToFrom) ? (string) ($replyToFrom['username'] ?? $replyToFrom['first_name'] ?? '') : '',
             'chat_type' => $chatType,
             'chat_title' => is_string($chat['title'] ?? null) ? (string) $chat['title'] : '',
             'update_id' => $this->toIntOrNull($payload['update_id'] ?? null),

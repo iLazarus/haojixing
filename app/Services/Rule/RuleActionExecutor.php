@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services\Rule;
 
+use App\Models\AppMember;
+use App\Models\TgGroup;
 use App\Models\TgUser;
 use App\Services\Group\GroupSyncService;
 use App\Services\Group\GroupService;
@@ -52,6 +54,7 @@ class RuleActionExecutor
             'api_method' => $apiMethod,
             'api' => $apiUrl,
             'api_payload' => $apiPayload,
+            'context' => $context,
             'reply_template' => $replyTemplate,
             'reply_text' => $replyText,
         ];
@@ -59,16 +62,39 @@ class RuleActionExecutor
 
     public function renderReplyText(array $action, array $matches, array $context, ?array $apiResult): ?string
     {
+        if (is_array($apiResult) && ($apiResult['suppress_reply'] ?? false) === true) {
+            return null;
+        }
+
         $replyTemplate = is_string($action['reply_template'] ?? null) ? $action['reply_template'] : null;
         if ($replyTemplate === null) {
             return is_string($action['reply_text'] ?? null) ? (string) $action['reply_text'] : null;
+        }
+
+        // API 调用失败时，不再沿用成功模板，避免误导用户。
+        if (($action['mode'] ?? null) === 'api_and_reply' && is_array($apiResult) && ($apiResult['ok'] ?? true) !== true) {
+            $errorMessage = '请求失败';
+            if (is_array($apiResult['body'] ?? null) && is_string($apiResult['body']['message'] ?? null)) {
+                $errorMessage = (string) $apiResult['body']['message'];
+            } elseif (is_string($apiResult['error'] ?? null) && trim((string) $apiResult['error']) !== '') {
+                $errorMessage = (string) $apiResult['error'];
+            }
+
+            return sprintf('记账失败，原因=%s', $errorMessage);
         }
 
         $runtimeContext = $context;
         if ($apiResult !== null) {
             $runtimeContext['api_result'] = $apiResult;
             if (is_array($apiResult['body'] ?? null)) {
-                $runtimeContext['result'] = $apiResult['body'];
+                $resultBody = $apiResult['body'];
+
+                // 兼容模板 {{result.data.id}}：内部调用返回原始模型时补齐 data 包裹层。
+                if (!array_key_exists('data', $resultBody)) {
+                    $resultBody['data'] = $apiResult['body'];
+                }
+
+                $runtimeContext['result'] = $resultBody;
             }
         }
 
@@ -88,9 +114,10 @@ class RuleActionExecutor
 
         $method = $this->normalizeMethod($action['api_method'] ?? null);
         $payload = is_array($action['api_payload'] ?? null) ? $action['api_payload'] : [];
+        $context = is_array($action['context'] ?? null) ? $action['context'] : [];
         $lastError = null;
 
-        $preparedPayload = $this->preparePayloadForApi($method, $rawUrl, $payload);
+        $preparedPayload = $this->preparePayloadForApi($method, $rawUrl, $payload, $context);
         if ($preparedPayload['ok'] === false) {
             return [
                 'method' => $method,
@@ -100,6 +127,7 @@ class RuleActionExecutor
                 'body' => ['message' => (string) ($preparedPayload['error'] ?? 'invalid payload')],
                 'raw' => (string) json_encode(['message' => (string) ($preparedPayload['error'] ?? 'invalid payload')], JSON_UNESCAPED_UNICODE),
                 'transport' => 'internal',
+                'suppress_reply' => (bool) ($preparedPayload['suppress_reply'] ?? false),
             ];
         }
         $payload = is_array($preparedPayload['payload'] ?? null) ? $preparedPayload['payload'] : $payload;
@@ -296,9 +324,9 @@ class RuleActionExecutor
     }
 
     /**
-     * @return array{ok: bool, payload?: array<string, mixed>, error?: string}
+    * @return array{ok: bool, payload?: array<string, mixed>, error?: string, suppress_reply?: bool}
      */
-    private function preparePayloadForApi(string $method, string $url, array $payload): array
+    private function preparePayloadForApi(string $method, string $url, array $payload, array $context = []): array
     {
         $parts = parse_url($url);
         if (!is_array($parts)) {
@@ -311,9 +339,23 @@ class RuleActionExecutor
         }
 
         $next = $payload;
+        $next['tg_gid'] = $this->normalizeGidValue($next['tg_gid'] ?? null);
+        if ($next['tg_gid'] === null || $next['tg_gid'] <= 0) {
+            return ['ok' => false, 'error' => 'tg_gid 缺失或无效'];
+        }
+
         $next['tg_uid'] = $this->normalizeUidValue($next['tg_uid'] ?? null);
         if ($next['tg_uid'] === null || $next['tg_uid'] <= 0) {
             return ['ok' => false, 'error' => 'tg_uid 缺失或无效'];
+        }
+
+        if (!$this->isLedgerOperatorMember((int) $next['tg_gid'], (int) $next['tg_uid'])) {
+            return ['ok' => false, 'error' => '仅 operator 角色可以记账', 'suppress_reply' => true];
+        }
+
+        $replyToUid = $this->normalizeUidValue($context['reply_to_tg_uid'] ?? null);
+        if ($replyToUid !== null && $replyToUid > 0) {
+            $next['tg_belong_uid'] = $replyToUid;
         }
 
         $belongRaw = $next['tg_belong_uid'] ?? null;
@@ -328,29 +370,197 @@ class RuleActionExecutor
             $next['tg_belong_uid'] = $resolvedBelongUid;
         }
 
-        $currencyRaw = $next['currency_type'] ?? null;
-        if ($currencyRaw === null || (is_string($currencyRaw) && trim($currencyRaw) === '')) {
-            $next['currency_type'] = 'R';
-        } else {
-            $currencyType = strtoupper(trim((string) $currencyRaw));
-            if (!in_array($currencyType, ['R', 'U'], true)) {
-                return ['ok' => false, 'error' => 'currency_type 仅允许 R 或 U'];
-            }
-
-            $next['currency_type'] = $currencyType;
+        $amountCent = $this->normalizeAmountCent($next['amount_cent'] ?? ($next['amount'] ?? null));
+        if ($amountCent === null) {
+            return ['ok' => false, 'error' => 'amount 无法解析，请传入数字（单位：元）'];
         }
+        $next['amount'] = $amountCent;
 
-        $next['tg_nickname'] = array_key_exists('tg_nickname', $next)
-            ? (string) ($next['tg_nickname'] ?? '')
-            : (string) ($next['sender'] ?? '');
-        $next['tg_belong_nickname'] = array_key_exists('tg_belong_nickname', $next)
-            ? (string) ($next['tg_belong_nickname'] ?? '')
-            : (string) ($next['tg_nickname'] ?? '');
-        $next['tg_g_name'] = array_key_exists('tg_g_name', $next)
-            ? (string) ($next['tg_g_name'] ?? '')
-            : (string) ($next['chat_title'] ?? '');
+        $currencyType = $this->normalizeCurrencyTypeFromSources($next, $context);
+        if ($currencyType === null) {
+            return ['ok' => false, 'error' => 'currency_type 仅允许 R 或 U'];
+        }
+        $next['currency_type'] = $currencyType;
+
+        $next['tg_nickname'] = $this->firstNonEmptyString([
+            $next['tg_nickname'] ?? null,
+            $next['sender'] ?? null,
+            $context['sender'] ?? null,
+            $this->findUserDisplayNameByUid((int) $next['tg_uid']),
+        ]);
+
+        $next['tg_belong_nickname'] = $this->firstNonEmptyString([
+            $next['tg_belong_nickname'] ?? null,
+            $context['reply_to_sender'] ?? null,
+            $context['tg_belong_nickname'] ?? null,
+            (int) $next['tg_belong_uid'] === (int) $next['tg_uid'] ? $next['tg_nickname'] : null,
+            $this->findUserDisplayNameByUid((int) $next['tg_belong_uid']),
+        ]);
+
+        $next['tg_g_name'] = $this->firstNonEmptyString([
+            $next['tg_g_name'] ?? null,
+            $next['chat_title'] ?? null,
+            $context['chat_title'] ?? null,
+            $this->findGroupNameByGid((int) $next['tg_gid']),
+        ]);
 
         return ['ok' => true, 'payload' => $next];
+    }
+
+    private function isLedgerOperatorMember(int $tgGid, int $tgUid): bool
+    {
+        if ($tgGid <= 0 || $tgUid <= 0) {
+            return false;
+        }
+
+        return AppMember::query()
+            ->where('tg_gid', $tgGid)
+            ->where('tg_uid', $tgUid)
+            ->where('is_active', true)
+            ->where('role', AppMember::ROLE_OPERATOR)
+            ->exists();
+    }
+
+    private function normalizeAmountCent(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value * 100;
+        }
+
+        if (is_float($value)) {
+            return (int) round($value * 100, 0, PHP_ROUND_HALF_UP);
+        }
+
+        if (!is_string($value)) {
+            return null;
+        }
+
+        $text = trim($value);
+        if ($text === '' || !is_numeric($text)) {
+            return null;
+        }
+
+        return (int) round(((float) $text) * 100, 0, PHP_ROUND_HALF_UP);
+    }
+
+    private function normalizeCurrencyTypeFromSources(array $payload, array $context): ?string
+    {
+        $candidates = [
+            $payload['currency_type'] ?? null,
+            $this->extractCurrencySuffix((string) ($payload['amount'] ?? '')),
+            $this->extractCurrencySuffix((string) ($context['message'] ?? '')),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (!is_string($candidate)) {
+                continue;
+            }
+
+            $currency = strtoupper(trim($candidate));
+            if ($currency === '') {
+                continue;
+            }
+
+            if (in_array($currency, ['R', 'U'], true)) {
+                return $currency;
+            }
+
+            return null;
+        }
+
+        return 'R';
+    }
+
+    private function extractCurrencySuffix(string $text): ?string
+    {
+        if ($text === '') {
+            return null;
+        }
+
+        if (preg_match('/([RUru])\s*$/', $text, $matches) !== 1) {
+            return null;
+        }
+
+        return strtoupper((string) ($matches[1] ?? ''));
+    }
+
+    private function firstNonEmptyString(array $candidates): string
+    {
+        foreach ($candidates as $candidate) {
+            if (!is_string($candidate)) {
+                continue;
+            }
+
+            $value = trim($candidate);
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        return '';
+    }
+
+    private function findUserDisplayNameByUid(int $tgUid): string
+    {
+        if ($tgUid <= 0) {
+            return '';
+        }
+
+        $user = TgUser::query()
+            ->select(['tg_nickname', 'tg_username'])
+            ->where('tg_uid', $tgUid)
+            ->first();
+
+        if (!$user instanceof TgUser) {
+            return '';
+        }
+
+        $nickname = trim((string) ($user->tg_nickname ?? ''));
+        if ($nickname !== '') {
+            return $nickname;
+        }
+
+        return trim((string) ($user->tg_username ?? ''));
+    }
+
+    private function findGroupNameByGid(int $tgGid): string
+    {
+        if ($tgGid <= 0) {
+            return '';
+        }
+
+        $group = TgGroup::query()
+            ->select(['tg_g_name'])
+            ->where('tg_gid', $tgGid)
+            ->first();
+
+        return trim((string) ($group?->tg_g_name ?? ''));
+    }
+
+    private function normalizeGidValue(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return abs($value);
+        }
+
+        if (is_float($value)) {
+            return abs((int) $value);
+        }
+
+        if (!is_string($value)) {
+            return null;
+        }
+
+        $text = trim($value);
+        if ($text === '') {
+            return null;
+        }
+
+        if (preg_match('/^-?\d+$/', $text) !== 1) {
+            return null;
+        }
+
+        return abs((int) $text);
     }
 
     private function normalizeUidValue(mixed $value): ?int
