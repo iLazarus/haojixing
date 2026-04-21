@@ -551,6 +551,15 @@
         return map[columnKey] || columnKey;
     }
 
+    function getFieldTitle(moduleKey, fieldKey) {
+        const translated = getColumnTitle(moduleKey, fieldKey);
+        if (translated !== fieldKey) {
+            return translated;
+        }
+
+        return fieldKey.replace(/_/g, ' ');
+    }
+
     function notify(type, msg, ttl = 2600) {
         const el = document.createElement('div');
         el.className = `toast ${type}`;
@@ -720,7 +729,7 @@
         wrap.className = 'field';
 
         const label = document.createElement('label');
-        label.textContent = key.replace(/_/g, ' ');
+        label.textContent = getFieldTitle(activeKey, key);
         wrap.appendChild(label);
 
         if (['is_open', 'is_active', 'is_default', 'stop_on_match', 'is_delete', 'execute_api'].includes(key)) {
@@ -729,11 +738,11 @@
 
             const optTrue = document.createElement('option');
             optTrue.value = 'true';
-            optTrue.textContent = 'true';
+            optTrue.textContent = '是';
 
             const optFalse = document.createElement('option');
             optFalse.value = 'false';
-            optFalse.textContent = 'false';
+            optFalse.textContent = '否';
 
             const isTrue = String(value).toLowerCase() === 'true' || value === true;
             if (isTrue) {
