@@ -14,10 +14,6 @@ class LedgerUpdateRequest extends ApiFormRequest
     public function rules(): array
     {
         return [
-            'tg_gid' => ['sometimes', 'integer', 'min:1'],
-            'tg_uid' => ['sometimes', 'integer', 'min:1'],
-            'tg_belong_uid' => ['sometimes', 'integer', 'min:1'],
-            'tg_msg_id' => ['sometimes', 'integer', 'min:1'],
             'amount' => ['sometimes', 'integer'],
             'is_delete' => ['sometimes', 'boolean'],
         ];

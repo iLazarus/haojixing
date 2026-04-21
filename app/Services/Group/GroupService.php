@@ -55,7 +55,7 @@ class GroupService
             'updated_at' => $this->chinaDate(),
         ];
 
-        foreach (['tg_oid', 'is_open', 'exchange_rate', 'fee_rate', 'period_point', 'period_duration'] as $field) {
+        foreach (['is_open', 'exchange_rate', 'fee_rate', 'period_point', 'period_duration'] as $field) {
             if (array_key_exists($field, $data)) {
                 $next[$field] = $data[$field];
             }

@@ -50,7 +50,7 @@ class LedgerService
         }
 
         $next = ['updated_at' => $this->chinaDate()];
-        foreach (['tg_gid', 'tg_uid', 'tg_belong_uid', 'tg_msg_id', 'amount', 'is_delete'] as $field) {
+        foreach (['amount', 'is_delete'] as $field) {
             if (array_key_exists($field, $data)) {
                 $next[$field] = $data[$field];
             }

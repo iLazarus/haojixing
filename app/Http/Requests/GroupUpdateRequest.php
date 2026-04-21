@@ -14,7 +14,6 @@ class GroupUpdateRequest extends ApiFormRequest
     public function rules(): array
     {
         return [
-            'tg_oid' => ['sometimes', 'integer', 'min:1'],
             'is_open' => ['sometimes', 'boolean'],
             'base_currency' => ['sometimes', 'string', 'size:1'],
             'quote_currency' => ['sometimes', 'string', 'size:1'],

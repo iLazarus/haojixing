@@ -126,6 +126,16 @@
             font-family: "JetBrains Mono", "Fira Code", monospace;
         }
 
+        input:disabled,
+        select:disabled,
+        textarea:disabled {
+            background: #f1f5f9;
+            color: #64748b;
+            border-color: #cbd5e1;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
         .ops {
             display: flex;
             flex-wrap: wrap;
@@ -560,6 +570,10 @@
         return fieldKey.replace(/_/g, ' ');
     }
 
+    function isLockedEditField(key) {
+        return ['id', 'tg_gid', 'tg_uid', 'tg_oid'].includes(key);
+    }
+
     function notify(type, msg, ttl = 2600) {
         const el = document.createElement('div');
         el.className = `toast ${type}`;
@@ -724,13 +738,15 @@
         renderPager(filteredRows.length);
     }
 
-    function createFieldEl(prefix, key, value) {
+    function createFieldEl(prefix, key, value, options = {}) {
         const wrap = document.createElement('div');
         wrap.className = 'field';
 
         const label = document.createElement('label');
         label.textContent = getFieldTitle(activeKey, key);
         wrap.appendChild(label);
+
+        const readonly = Boolean(options.readonly);
 
         if (['is_open', 'is_active', 'is_default', 'stop_on_match', 'is_delete', 'execute_api'].includes(key)) {
             const select = document.createElement('select');
@@ -753,6 +769,10 @@
 
             select.appendChild(optTrue);
             select.appendChild(optFalse);
+            if (readonly) {
+                select.disabled = true;
+                select.title = '该字段不可编辑';
+            }
             wrap.appendChild(select);
             return wrap;
         }
@@ -762,6 +782,10 @@
             const textarea = document.createElement('textarea');
             textarea.name = `${prefix}_${key}`;
             textarea.value = value == null ? '' : String(value);
+            if (readonly) {
+                textarea.disabled = true;
+                textarea.title = '该字段不可编辑';
+            }
             wrap.appendChild(textarea);
             return wrap;
         }
@@ -769,6 +793,10 @@
         const input = document.createElement('input');
         input.name = `${prefix}_${key}`;
         input.value = value == null ? '' : String(value);
+        if (readonly) {
+            input.disabled = true;
+            input.title = '该字段不可编辑';
+        }
         wrap.appendChild(input);
         return wrap;
     }
@@ -786,12 +814,14 @@
     function renderCrudModal(mode, row = {}) {
         const mod = modules[activeKey];
         const fields = mode === 'create' ? mod.createFields : mod.updateFields;
+        const lockedEditFields = ['id', 'tg_gid', 'tg_uid', 'tg_oid'];
 
         openModal(`${mod.label} ${mode === 'create' ? '新增' : '编辑'}`, (container) => {
             const grid = document.createElement('div');
             grid.className = 'grid';
             fields.forEach((k) => {
-                grid.appendChild(createFieldEl('modal', k, row[k] ?? ''));
+                const isReadonly = mode === 'update' && isLockedEditField(k);
+                grid.appendChild(createFieldEl('modal', k, row[k] ?? '', { readonly: isReadonly }));
             });
 
             const ops = document.createElement('div');
@@ -827,7 +857,13 @@
                         const res = await apiCall('POST', path, payload);
                         notify('ok', `新增成功\n${JSON.stringify(res.data ?? {}, null, 2)}`);
                     } else {
-                        const payload = pickPayload(source, mod.updateFields.filter(k => !['tg_gid', 'tg_uid', 'app_rule_id', 'id'].includes(k)));
+                        lockedEditFields.forEach((k) => {
+                            if (Object.prototype.hasOwnProperty.call(row, k)) {
+                                source[k] = row[k];
+                            }
+                        });
+
+                        const payload = pickPayload(source, mod.updateFields.filter(k => !['tg_gid', 'tg_uid', 'app_rule_id', 'id', 'tg_oid'].includes(k)));
                         const res = await apiCall('PATCH', mod.updatePath(source), payload);
                         notify('ok', `更新成功\n${JSON.stringify(res.data ?? {}, null, 2)}`);
                     }
