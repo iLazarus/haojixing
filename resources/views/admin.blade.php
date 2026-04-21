@@ -387,7 +387,7 @@
 (() => {
     const modules = {
         groups: {
-            label: 'Group',
+            label: '群组',
             columns: ['tg_gid', 'tg_oid', 'is_open', 'base_currency', 'quote_currency', 'exchange_rate', 'fee_rate', 'period_point', 'period_duration', 'updated_at'],
             listPath: '/api/v1/groups',
             createPath: () => '/api/v1/groups',
@@ -398,7 +398,7 @@
             updateFields: ['tg_gid', 'fee_rate', 'period_point', 'period_duration', 'is_open']
         },
         users: {
-            label: 'User',
+            label: '用户',
             columns: ['tg_uid', 'tg_username', 'tg_nickname', 'updated_at'],
             listPath: '/api/v1/users',
             createPath: () => '/api/v1/users',
@@ -409,7 +409,7 @@
             updateFields: ['tg_uid', 'tg_username', 'tg_nickname']
         },
         members: {
-            label: 'Member',
+            label: '成员',
             columns: ['tg_gid', 'tg_uid', 'role', 'is_active', 'updated_at'],
             listPath: (f) => `/api/v1/groups/${f.tg_gid}/members`,
             createPath: () => '/api/v1/members',
@@ -420,7 +420,7 @@
             updateFields: ['tg_gid', 'tg_uid', 'role', 'is_active']
         },
         rules: {
-            label: 'Rule',
+            label: '规则',
             columns: ['id', 'remark', 'regular', 'api', 'is_active', 'is_default', 'updated_at'],
             listPath: '/api/v1/rules',
             createPath: () => '/api/v1/rules',
@@ -431,7 +431,7 @@
             updateFields: ['id', 'remark', 'regular', 'api', 'data_map', 'is_active', 'is_default']
         },
         groupRules: {
-            label: 'GroupRule',
+            label: '群规则',
             columns: ['tg_gid', 'app_rule_id', 'priority', 'stop_on_match', 'is_active', 'updated_at'],
             listPath: (f) => `/api/v1/groups/${f.tg_gid}/rules`,
             createPath: (f) => `/api/v1/groups/${f.tg_gid}/rules`,
@@ -442,7 +442,7 @@
             updateFields: ['tg_gid', 'app_rule_id', 'priority', 'stop_on_match', 'is_active']
         },
         ledgers: {
-            label: 'Ledger',
+            label: '账单',
             columns: ['id', 'tg_gid', 'tg_uid', 'tg_belong_uid', 'tg_msg_id', 'amount', 'is_delete', 'updated_at'],
             listPath: (f) => `/api/v1/groups/${f.tg_gid}/ledgers`,
             createPath: () => '/api/v1/ledgers',
@@ -484,6 +484,72 @@
     const moduleParams = {
         tg_gid: localStorage.getItem('admin_module_tg_gid') || '900001',
     };
+
+    const columnTitleMap = {
+        groups: {
+            actions: '操作',
+            tg_gid: '群ID',
+            tg_oid: '群主ID',
+            is_open: '开启记账',
+            base_currency: '本币',
+            quote_currency: '外币',
+            exchange_rate: '外币汇率',
+            fee_rate: '费率',
+            period_point: '账期时点',
+            period_duration: '账期时长',
+            updated_at: '更新时间',
+        },
+        users: {
+            actions: '操作',
+            tg_uid: '用户ID',
+            tg_username: '用户名',
+            tg_nickname: '昵称',
+            updated_at: '更新时间',
+        },
+        members: {
+            actions: '操作',
+            tg_gid: '群ID',
+            tg_uid: '用户ID',
+            role: '角色',
+            is_active: '启用',
+            updated_at: '更新时间',
+        },
+        rules: {
+            actions: '操作',
+            id: '规则ID',
+            remark: '备注',
+            regular: '匹配PCRE正则',
+            api: 'API地址',
+            is_active: '启用',
+            is_default: '系统默认规则',
+            updated_at: '更新时间',
+        },
+        groupRules: {
+            actions: '操作',
+            tg_gid: '群ID',
+            app_rule_id: '规则ID',
+            priority: '优先级',
+            stop_on_match: '命中即停',
+            is_active: '启用',
+            updated_at: '更新时间',
+        },
+        ledgers: {
+            actions: '操作',
+            id: '账单ID',
+            tg_gid: '群ID',
+            tg_uid: '用户ID',
+            tg_belong_uid: '归属用户ID',
+            tg_msg_id: '消息ID',
+            amount: '金额(分)',
+            is_delete: '软删除',
+            updated_at: '更新时间',
+        },
+    };
+
+    function getColumnTitle(moduleKey, columnKey) {
+        const map = columnTitleMap[moduleKey] || {};
+        return map[columnKey] || columnKey;
+    }
 
     function notify(type, msg, ttl = 2600) {
         const el = document.createElement('div');
@@ -891,7 +957,7 @@
         currentPageRows = rows;
         const mod = modules[activeKey];
         const columns = ['actions', ...mod.columns];
-        headRow.innerHTML = columns.map((c) => `<th>${c}</th>`).join('');
+        headRow.innerHTML = columns.map((c) => `<th>${getColumnTitle(activeKey, c)}</th>`).join('');
 
         bodyRows.innerHTML = '';
         rows.forEach((row, idx) => {
