@@ -398,14 +398,14 @@
     const modules = {
         groups: {
             label: '群组',
-            columns: ['tg_gid', 'tg_oid', 'is_open', 'base_currency', 'quote_currency', 'exchange_rate', 'fee_rate', 'period_point', 'period_duration', 'updated_at'],
+            columns: ['tg_gid', 'tg_oid', 'tg_g_name', 'tg_o_nickname', 'is_open', 'base_currency', 'quote_currency', 'exchange_rate', 'fee_rate', 'period_point', 'period_duration', 'updated_at'],
             listPath: '/api/v1/groups',
             createPath: () => '/api/v1/groups',
             updatePath: (f) => `/api/v1/groups/${f.tg_gid}`,
             deletePath: (f) => `/api/v1/groups/${f.tg_gid}`,
-            createFields: ['tg_gid', 'tg_oid', 'is_open', 'base_currency', 'quote_currency', 'exchange_rate', 'fee_rate', 'period_point', 'period_duration'],
+            createFields: ['tg_gid', 'tg_oid', 'tg_g_name', 'tg_o_nickname', 'is_open', 'base_currency', 'quote_currency', 'exchange_rate', 'fee_rate', 'period_point', 'period_duration'],
             createOmitFields: [],
-            updateFields: ['tg_gid', 'fee_rate', 'period_point', 'period_duration', 'is_open']
+            updateFields: ['tg_gid', 'tg_g_name', 'tg_o_nickname', 'fee_rate', 'period_point', 'period_duration', 'is_open']
         },
         users: {
             label: '用户',
@@ -420,14 +420,14 @@
         },
         members: {
             label: '成员',
-            columns: ['tg_gid', 'tg_uid', 'role', 'is_active', 'updated_at'],
-            listPath: (f) => `/api/v1/groups/${f.tg_gid}/members`,
+            columns: ['tg_gid', 'tg_g_name', 'tg_uid', 'tg_nickname', 'role', 'is_active', 'updated_at'],
+            listPath: (f) => `/api/v1/members${f.tg_gid ? `?tg_gid=${encodeURIComponent(f.tg_gid)}` : ''}`,
             createPath: () => '/api/v1/members',
             updatePath: (f) => `/api/v1/groups/${f.tg_gid}/members/${f.tg_uid}`,
             deletePath: (f) => `/api/v1/groups/${f.tg_gid}/members/${f.tg_uid}`,
-            createFields: ['tg_gid', 'tg_uid', 'role', 'is_active'],
+            createFields: ['tg_gid', 'tg_g_name', 'tg_uid', 'tg_nickname', 'role', 'is_active'],
             createOmitFields: [],
-            updateFields: ['tg_gid', 'tg_uid', 'role', 'is_active']
+            updateFields: ['tg_gid', 'tg_uid', 'tg_g_name', 'tg_nickname', 'role', 'is_active']
         },
         rules: {
             label: '规则',
@@ -443,7 +443,7 @@
         groupRules: {
             label: '群规则',
             columns: ['tg_gid', 'app_rule_id', 'priority', 'stop_on_match', 'is_active', 'updated_at'],
-            listPath: (f) => `/api/v1/groups/${f.tg_gid}/rules`,
+            listPath: (f) => `/api/v1/group-rules${f.tg_gid ? `?tg_gid=${encodeURIComponent(f.tg_gid)}` : ''}`,
             createPath: (f) => `/api/v1/groups/${f.tg_gid}/rules`,
             updatePath: (f) => `/api/v1/groups/${f.tg_gid}/rules/${f.app_rule_id}`,
             deletePath: (f) => `/api/v1/groups/${f.tg_gid}/rules/${f.app_rule_id}`,
@@ -453,14 +453,14 @@
         },
         ledgers: {
             label: '账单',
-            columns: ['id', 'tg_gid', 'tg_uid', 'tg_belong_uid', 'tg_msg_id', 'amount', 'is_delete', 'updated_at'],
-            listPath: (f) => `/api/v1/groups/${f.tg_gid}/ledgers`,
+            columns: ['id', 'tg_gid', 'tg_g_name', 'tg_uid', 'tg_nickname', 'tg_belong_uid', 'tg_belong_nickname', 'tg_msg_id', 'amount', 'currency_type', 'is_delete', 'updated_at'],
+            listPath: (f) => `/api/v1/ledgers${f.tg_gid ? `?tg_gid=${encodeURIComponent(f.tg_gid)}` : ''}`,
             createPath: () => '/api/v1/ledgers',
             updatePath: (f) => `/api/v1/ledgers/${f.id}`,
             deletePath: (f) => `/api/v1/ledgers/${f.id}`,
-            createFields: ['tg_gid', 'tg_uid', 'tg_belong_uid', 'tg_msg_id', 'amount', 'is_delete'],
+            createFields: ['tg_gid', 'tg_g_name', 'tg_uid', 'tg_nickname', 'tg_belong_uid', 'tg_belong_nickname', 'tg_msg_id', 'amount', 'currency_type', 'is_delete'],
             createOmitFields: [],
-            updateFields: ['id', 'amount', 'is_delete']
+            updateFields: ['id', 'amount', 'currency_type', 'tg_g_name', 'tg_nickname', 'tg_belong_nickname', 'is_delete']
         }
     };
 
@@ -500,6 +500,8 @@
             actions: '操作',
             tg_gid: '群ID',
             tg_oid: '群主ID',
+            tg_g_name: '群名称',
+            tg_o_nickname: '群主昵称',
             is_open: '开启记账',
             base_currency: '本币',
             quote_currency: '外币',
@@ -519,7 +521,9 @@
         members: {
             actions: '操作',
             tg_gid: '群ID',
+            tg_g_name: '群名称',
             tg_uid: '用户ID',
+            tg_nickname: '用户昵称',
             role: '角色',
             is_active: '启用',
             updated_at: '更新时间',
@@ -547,10 +551,14 @@
             actions: '操作',
             id: '账单ID',
             tg_gid: '群ID',
+            tg_g_name: '群名称',
             tg_uid: '用户ID',
+            tg_nickname: '记账人昵称',
             tg_belong_uid: '归属用户ID',
+            tg_belong_nickname: '归属用户昵称',
             tg_msg_id: '消息ID',
             amount: '金额(分)',
+            currency_type: '币种类型',
             is_delete: '软删除',
             updated_at: '更新时间',
         },
@@ -590,7 +598,7 @@
         }
     }
 
-    function moduleNeedsTgGid(key = activeKey) {
+    function moduleSupportsTgGidFilter(key = activeKey) {
         return ['members', 'groupRules', 'ledgers'].includes(key);
     }
 
@@ -710,7 +718,7 @@
     }
 
     function syncModuleParamUI() {
-        if (moduleNeedsTgGid()) {
+        if (moduleSupportsTgGidFilter()) {
             gidFilterWrap.style.display = 'grid';
             gidFilterInput.value = moduleParams.tg_gid;
         } else {
@@ -874,7 +882,7 @@
                 try {
                     const source = readFields('modal', fields);
                     if (mode === 'create') {
-                        if (moduleNeedsTgGid() && !source.tg_gid) {
+                        if (moduleSupportsTgGidFilter() && !source.tg_gid) {
                             source.tg_gid = Number(moduleParams.tg_gid || 0);
                         }
                         const omit = Array.isArray(mod.createOmitFields) ? mod.createOmitFields : [];
@@ -1100,15 +1108,7 @@
     async function loadList(showToast = true) {
         const mod = modules[activeKey];
         try {
-            const filters = moduleNeedsTgGid() ? getModulePathValue() : {};
-            if (moduleNeedsTgGid() && !filters.tg_gid) {
-                latestRows = [];
-                filteredRows = [];
-                renderTable([]);
-                renderPager(0);
-                notify('warn', '当前模块需要 tg_gid，请先填写。');
-                return;
-            }
+            const filters = moduleSupportsTgGidFilter() ? getModulePathValue() : {};
 
             const path = typeof mod.listPath === 'function' ? mod.listPath(filters) : mod.listPath;
             const res = await apiCall('GET', path);

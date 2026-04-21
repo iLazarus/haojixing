@@ -4,15 +4,21 @@ declare(strict_types=1);
 
 namespace App\Services\Rule;
 
+use App\Models\TgUser;
 use App\Services\Group\GroupService;
+use App\Services\Ledger\LedgerService;
 use App\Models\AppRule;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use InvalidArgumentException;
 use Throwable;
 
 class RuleActionExecutor
 {
-    public function __construct(private readonly GroupService $groupService)
+    public function __construct(
+        private readonly GroupService $groupService,
+        private readonly LedgerService $ledgerService
+    )
     {
     }
 
@@ -83,6 +89,20 @@ class RuleActionExecutor
         $payload = is_array($action['api_payload'] ?? null) ? $action['api_payload'] : [];
         $lastError = null;
 
+        $preparedPayload = $this->preparePayloadForApi($method, $rawUrl, $payload);
+        if ($preparedPayload['ok'] === false) {
+            return [
+                'method' => $method,
+                'url' => $rawUrl,
+                'status' => 422,
+                'ok' => false,
+                'body' => ['message' => (string) ($preparedPayload['error'] ?? 'invalid payload')],
+                'raw' => (string) json_encode(['message' => (string) ($preparedPayload['error'] ?? 'invalid payload')], JSON_UNESCAPED_UNICODE),
+                'transport' => 'internal',
+            ];
+        }
+        $payload = is_array($preparedPayload['payload'] ?? null) ? $preparedPayload['payload'] : $payload;
+
         $internalResult = $this->tryExecuteInternalApi($method, $rawUrl, $payload);
         if ($internalResult !== null) {
             return $internalResult;
@@ -140,58 +160,192 @@ class RuleActionExecutor
         }
 
         $path = (string) ($parts['path'] ?? '');
-        if ($method !== 'PATCH') {
-            return null;
-        }
+        if ($method === 'PATCH' && preg_match('#^/api/v1/groups/(-?\d+)$#', $path, $matches) === 1) {
+            try {
+                $tgGid = (int) $matches[1];
+                $updated = $this->groupService->updateByTgGid($tgGid, $payload);
 
-        if (preg_match('#^/api/v1/groups/(-?\d+)$#', $path, $matches) !== 1) {
-            return null;
-        }
+                if ($updated === null) {
+                    return [
+                        'method' => $method,
+                        'url' => $url,
+                        'status' => 404,
+                        'ok' => false,
+                        'body' => ['message' => 'group not found'],
+                        'raw' => '{"message":"group not found"}',
+                        'transport' => 'internal',
+                    ];
+                }
 
-        try {
-            $tgGid = (int) $matches[1];
-            $updated = $this->groupService->updateByTgGid($tgGid, $payload);
-
-            if ($updated === null) {
+                $body = $updated->toArray();
                 return [
                     'method' => $method,
                     'url' => $url,
-                    'status' => 404,
+                    'status' => 200,
+                    'ok' => true,
+                    'body' => $body,
+                    'raw' => (string) json_encode($body, JSON_UNESCAPED_UNICODE),
+                    'transport' => 'internal',
+                ];
+            } catch (Throwable $e) {
+                Log::channel('stderr')->warning('rule_api_internal_call_failed', [
+                    'method' => $method,
+                    'url' => $url,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return [
+                    'method' => $method,
+                    'url' => $url,
+                    'status' => 500,
                     'ok' => false,
-                    'body' => ['message' => 'group not found'],
-                    'raw' => '{"message":"group not found"}',
+                    'body' => ['message' => 'internal api execution failed'],
+                    'raw' => '{"message":"internal api execution failed"}',
+                    'error' => $e->getMessage(),
                     'transport' => 'internal',
                 ];
             }
-
-            $body = $updated->toArray();
-            return [
-                'method' => $method,
-                'url' => $url,
-                'status' => 200,
-                'ok' => true,
-                'body' => $body,
-                'raw' => (string) json_encode($body, JSON_UNESCAPED_UNICODE),
-                'transport' => 'internal',
-            ];
-        } catch (Throwable $e) {
-            Log::channel('stderr')->warning('rule_api_internal_call_failed', [
-                'method' => $method,
-                'url' => $url,
-                'error' => $e->getMessage(),
-            ]);
-
-            return [
-                'method' => $method,
-                'url' => $url,
-                'status' => 500,
-                'ok' => false,
-                'body' => ['message' => 'internal api execution failed'],
-                'raw' => '{"message":"internal api execution failed"}',
-                'error' => $e->getMessage(),
-                'transport' => 'internal',
-            ];
         }
+
+        if ($method === 'POST' && preg_match('#^/api/v1/ledgers$#', $path) === 1) {
+            try {
+                $created = $this->ledgerService->create($payload);
+                $body = $created->toArray();
+
+                return [
+                    'method' => $method,
+                    'url' => $url,
+                    'status' => 201,
+                    'ok' => true,
+                    'body' => $body,
+                    'raw' => (string) json_encode($body, JSON_UNESCAPED_UNICODE),
+                    'transport' => 'internal',
+                ];
+            } catch (InvalidArgumentException $e) {
+                return [
+                    'method' => $method,
+                    'url' => $url,
+                    'status' => 422,
+                    'ok' => false,
+                    'body' => ['message' => $e->getMessage()],
+                    'raw' => (string) json_encode(['message' => $e->getMessage()], JSON_UNESCAPED_UNICODE),
+                    'transport' => 'internal',
+                ];
+            } catch (Throwable $e) {
+                Log::channel('stderr')->warning('rule_api_internal_call_failed', [
+                    'method' => $method,
+                    'url' => $url,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return [
+                    'method' => $method,
+                    'url' => $url,
+                    'status' => 500,
+                    'ok' => false,
+                    'body' => ['message' => 'internal api execution failed'],
+                    'raw' => '{"message":"internal api execution failed"}',
+                    'error' => $e->getMessage(),
+                    'transport' => 'internal',
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array{ok: bool, payload?: array<string, mixed>, error?: string}
+     */
+    private function preparePayloadForApi(string $method, string $url, array $payload): array
+    {
+        $parts = parse_url($url);
+        if (!is_array($parts)) {
+            return ['ok' => true, 'payload' => $payload];
+        }
+
+        $path = (string) ($parts['path'] ?? '');
+        if ($method !== 'POST' || preg_match('#^/api/v1/ledgers$#', $path) !== 1) {
+            return ['ok' => true, 'payload' => $payload];
+        }
+
+        $next = $payload;
+        $next['tg_uid'] = $this->normalizeUidValue($next['tg_uid'] ?? null);
+        if ($next['tg_uid'] === null || $next['tg_uid'] <= 0) {
+            return ['ok' => false, 'error' => 'tg_uid 缺失或无效'];
+        }
+
+        $belongRaw = $next['tg_belong_uid'] ?? null;
+        if ($belongRaw === null || (is_string($belongRaw) && trim($belongRaw) === '')) {
+            $next['tg_belong_uid'] = $next['tg_uid'];
+        } else {
+            $resolvedBelongUid = $this->normalizeUidValue($belongRaw);
+            if ($resolvedBelongUid === null || $resolvedBelongUid <= 0) {
+                return ['ok' => false, 'error' => 'tg_belong_uid 无法解析，请确认 @username 已同步到 tg_user'];
+            }
+
+            $next['tg_belong_uid'] = $resolvedBelongUid;
+        }
+
+        $currencyRaw = $next['currency_type'] ?? null;
+        if ($currencyRaw === null || (is_string($currencyRaw) && trim($currencyRaw) === '')) {
+            $next['currency_type'] = 'R';
+        } else {
+            $currencyType = strtoupper(trim((string) $currencyRaw));
+            if (!in_array($currencyType, ['R', 'U'], true)) {
+                return ['ok' => false, 'error' => 'currency_type 仅允许 R 或 U'];
+            }
+
+            $next['currency_type'] = $currencyType;
+        }
+
+        $next['tg_nickname'] = array_key_exists('tg_nickname', $next)
+            ? (string) ($next['tg_nickname'] ?? '')
+            : (string) ($next['sender'] ?? '');
+        $next['tg_belong_nickname'] = array_key_exists('tg_belong_nickname', $next)
+            ? (string) ($next['tg_belong_nickname'] ?? '')
+            : (string) ($next['tg_nickname'] ?? '');
+        $next['tg_g_name'] = array_key_exists('tg_g_name', $next)
+            ? (string) ($next['tg_g_name'] ?? '')
+            : (string) ($next['chat_title'] ?? '');
+
+        return ['ok' => true, 'payload' => $next];
+    }
+
+    private function normalizeUidValue(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+
+        if (is_float($value)) {
+            return (int) $value;
+        }
+
+        if (!is_string($value)) {
+            return null;
+        }
+
+        $text = trim($value);
+        if ($text === '') {
+            return null;
+        }
+
+        if (preg_match('/^\d+$/', $text) === 1) {
+            return (int) $text;
+        }
+
+        $username = ltrim($text, '@');
+        if ($username === '') {
+            return null;
+        }
+
+        $user = TgUser::query()
+            ->select(['tg_uid'])
+            ->where('tg_username', $username)
+            ->first();
+
+        return $user?->tg_uid !== null ? (int) $user->tg_uid : null;
     }
 
     /**

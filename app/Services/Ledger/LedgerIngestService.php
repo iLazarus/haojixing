@@ -39,10 +39,14 @@ class LedgerIngestService
             return AppLedger::query()->create([
                 'tg_gid' => (int) $payload['tg_gid'],
                 'tg_uid' => (int) $payload['tg_uid'],
+                'tg_nickname' => (string) ($payload['tg_nickname'] ?? ''),
                 'tg_belong_uid' => (int) $payload['tg_belong_uid'],
+                'tg_belong_nickname' => (string) ($payload['tg_belong_nickname'] ?? ''),
                 'tg_msg_id' => (int) $payload['tg_msg_id'],
                 'is_delete' => false,
                 'amount' => $amountCent,
+                'currency_type' => $this->normalizeCurrencyType($payload['currency_type'] ?? null),
+                'tg_g_name' => (string) ($payload['tg_g_name'] ?? ''),
                 'created_at' => $chinaDate,
                 'updated_at' => $chinaDate,
             ]);
@@ -70,6 +74,10 @@ class LedgerIngestService
         if ($exchangeRate <= 0) {
             throw new InvalidArgumentException('exchange_rate 必须大于 0');
         }
+
+        if (array_key_exists('currency_type', $payload)) {
+            $this->normalizeCurrencyType($payload['currency_type']);
+        }
     }
 
     /**
@@ -91,5 +99,19 @@ class LedgerIngestService
     private function chinaDate(): string
     {
         return CarbonImmutable::now('Asia/Shanghai')->toDateString();
+    }
+
+    private function normalizeCurrencyType(mixed $value): string
+    {
+        if (!is_string($value) || trim($value) === '') {
+            return 'R';
+        }
+
+        $currencyType = strtoupper(trim($value));
+        if (!in_array($currencyType, ['R', 'U'], true)) {
+            throw new InvalidArgumentException('currency_type 仅允许 R 或 U');
+        }
+
+        return $currencyType;
     }
 }

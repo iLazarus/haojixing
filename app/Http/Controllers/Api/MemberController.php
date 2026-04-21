@@ -20,6 +20,16 @@ class MemberController extends Controller
     {
     }
 
+    public function index(Request $request): JsonResponse
+    {
+        $limit = (int) $request->query('limit', 200);
+        $tgGidRaw = $request->query('tg_gid');
+        $tgGid = is_numeric($tgGidRaw) ? (int) $tgGidRaw : null;
+        $data = $this->memberService->list(max(1, min(1000, $limit)), $tgGid);
+
+        return $this->success($request, $data);
+    }
+
     public function listByGroup(int $tgGid, Request $request): JsonResponse
     {
         $limit = (int) $request->query('limit', 200);

@@ -32,6 +32,8 @@ class GroupService
         return TgGroup::query()->create([
             'tg_gid' => (int) $data['tg_gid'],
             'tg_oid' => (int) $data['tg_oid'],
+            'tg_g_name' => (string) ($data['tg_g_name'] ?? ''),
+            'tg_o_nickname' => (string) ($data['tg_o_nickname'] ?? ''),
             'is_open' => (bool) ($data['is_open'] ?? true),
             'base_currency' => strtoupper((string) ($data['base_currency'] ?? 'R')),
             'quote_currency' => strtoupper((string) ($data['quote_currency'] ?? 'U')),
@@ -58,6 +60,12 @@ class GroupService
         foreach (['is_open', 'exchange_rate', 'fee_rate', 'period_point', 'period_duration'] as $field) {
             if (array_key_exists($field, $data)) {
                 $next[$field] = $data[$field];
+            }
+        }
+
+        foreach (['tg_g_name', 'tg_o_nickname'] as $field) {
+            if (array_key_exists($field, $data)) {
+                $next[$field] = (string) ($data[$field] ?? '');
             }
         }
 

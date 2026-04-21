@@ -20,6 +20,16 @@ class GroupRuleController extends Controller
     {
     }
 
+    public function list(Request $request): JsonResponse
+    {
+        $limit = (int) $request->query('limit', 200);
+        $tgGidRaw = $request->query('tg_gid');
+        $tgGid = is_numeric($tgGidRaw) ? (int) $tgGidRaw : null;
+        $data = $this->groupRuleService->list(max(1, min(1000, $limit)), $tgGid);
+
+        return $this->success($request, $data);
+    }
+
     public function index(Request $request, int $tgGid): JsonResponse
     {
         $limit = (int) $request->query('limit', 200);

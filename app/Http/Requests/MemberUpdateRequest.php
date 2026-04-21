@@ -14,6 +14,8 @@ class MemberUpdateRequest extends ApiFormRequest
     public function rules(): array
     {
         return [
+            'tg_g_name' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'tg_nickname' => ['sometimes', 'nullable', 'string', 'max:255'],
             'role' => ['sometimes', 'in:operator,consumer'],
             'is_active' => ['sometimes', 'boolean'],
         ];

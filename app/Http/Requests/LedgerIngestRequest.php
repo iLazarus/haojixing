@@ -19,8 +19,12 @@ class LedgerIngestRequest extends ApiFormRequest
         return [
             'tg_gid' => ['required', 'integer', 'min:1'],
             'tg_uid' => ['required', 'integer', 'min:1'],
+            'tg_nickname' => ['nullable', 'string', 'max:255'],
             'tg_belong_uid' => ['required', 'integer', 'min:1'],
+            'tg_belong_nickname' => ['nullable', 'string', 'max:255'],
             'tg_msg_id' => ['required', 'integer', 'min:1'],
+            'tg_g_name' => ['nullable', 'string', 'max:255'],
+            'currency_type' => ['nullable', 'string', 'in:R,U'],
             'exchange_rate' => ['nullable', 'numeric', 'gt:0'],
 
             // 用户输入 0-100，支持小数，含边界

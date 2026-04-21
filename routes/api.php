@@ -25,6 +25,7 @@ Route::prefix('v1')->group(function (): void {
     Route::delete('/users/{tgUid}', [UserController::class, 'destroy']);
 
     Route::post('/members', [MemberController::class, 'store']);
+    Route::get('/members', [MemberController::class, 'index']);
     Route::get('/groups/{tgGid}/members', [MemberController::class, 'listByGroup']);
     Route::get('/groups/{tgGid}/members/{tgUid}', [MemberController::class, 'show']);
     Route::patch('/groups/{tgGid}/members/{tgUid}', [MemberController::class, 'update']);
@@ -37,12 +38,14 @@ Route::prefix('v1')->group(function (): void {
     Route::delete('/rules/{id}', [RuleController::class, 'destroy']);
 
     Route::get('/groups/{tgGid}/rules', [GroupRuleController::class, 'index']);
+    Route::get('/group-rules', [GroupRuleController::class, 'list']);
     Route::post('/groups/{tgGid}/rules', [GroupRuleController::class, 'store']);
     Route::patch('/groups/{tgGid}/rules/{appRuleId}', [GroupRuleController::class, 'update']);
     Route::delete('/groups/{tgGid}/rules/{appRuleId}', [GroupRuleController::class, 'destroy']);
     Route::post('/groups/{tgGid}/rules/match', [RuleEngineController::class, 'match']);
 
     Route::post('/ledgers', [LedgerController::class, 'store']);
+    Route::get('/ledgers', [LedgerController::class, 'index']);
     Route::get('/ledgers/{id}', [LedgerController::class, 'show']);
     Route::patch('/ledgers/{id}', [LedgerController::class, 'update']);
     Route::delete('/ledgers/{id}', [LedgerController::class, 'destroy']);

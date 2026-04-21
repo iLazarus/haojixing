@@ -11,6 +11,19 @@ use InvalidArgumentException;
 
 class MemberService
 {
+    public function list(int $limit = 200, ?int $tgGid = null): Collection
+    {
+        $query = AppMember::query()->orderByDesc('updated_at');
+
+        if ($tgGid !== null) {
+            $query->where('tg_gid', $tgGid);
+        }
+
+        return $query
+            ->limit($limit)
+            ->get();
+    }
+
     public function listByGroup(int $tgGid, int $limit = 200): Collection
     {
         return AppMember::query()
@@ -36,6 +49,8 @@ class MemberService
         return AppMember::query()->create([
             'tg_gid' => (int) $data['tg_gid'],
             'tg_uid' => (int) $data['tg_uid'],
+            'tg_g_name' => (string) ($data['tg_g_name'] ?? ''),
+            'tg_nickname' => (string) ($data['tg_nickname'] ?? ''),
             'role' => (string) $data['role'],
             'is_active' => (bool) ($data['is_active'] ?? false),
             'created_at' => $chinaDate,
@@ -58,6 +73,11 @@ class MemberService
         }
         if (array_key_exists('is_active', $data)) {
             $next['is_active'] = (bool) $data['is_active'];
+        }
+        foreach (['tg_g_name', 'tg_nickname'] as $field) {
+            if (array_key_exists($field, $data)) {
+                $next[$field] = (string) ($data[$field] ?? '');
+            }
         }
 
         $member->fill($next);

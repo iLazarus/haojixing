@@ -31,6 +31,10 @@ class AppMember extends Model
         'tg_gid',
         // Telegram 用户 ID
         'tg_uid',
+        // Telegram 群名称
+        'tg_g_name',
+        // Telegram 昵称
+        'tg_nickname',
         // 成员角色（operator/consumer）
         'role',
         // 成员是否启用

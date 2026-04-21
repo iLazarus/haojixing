@@ -12,6 +12,19 @@ use InvalidArgumentException;
 
 class GroupRuleService
 {
+    public function list(int $limit = 200, ?int $tgGid = null): Collection
+    {
+        $query = GroupRule::query()->orderBy('priority')->orderByDesc('updated_at');
+
+        if ($tgGid !== null) {
+            $query->where('tg_gid', $tgGid);
+        }
+
+        return $query
+            ->limit($limit)
+            ->get();
+    }
+
     public function listByGroup(int $tgGid, int $limit = 200): Collection
     {
         return GroupRule::query()

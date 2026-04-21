@@ -16,6 +16,8 @@ class GroupStoreRequest extends ApiFormRequest
         return [
             'tg_gid' => ['required', 'integer', 'not_in:0'],
             'tg_oid' => ['required', 'integer', 'min:1'],
+            'tg_g_name' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'tg_o_nickname' => ['sometimes', 'nullable', 'string', 'max:255'],
             'is_open' => ['sometimes', 'boolean'],
             'base_currency' => ['sometimes', 'string', 'size:1'],
             'quote_currency' => ['sometimes', 'string', 'size:1'],

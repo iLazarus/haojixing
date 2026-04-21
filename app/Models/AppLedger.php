@@ -25,14 +25,22 @@ class AppLedger extends Model
         'tg_gid',
         // Telegram 用户 ID
         'tg_uid',
+        // Telegram 用户昵称
+        'tg_nickname',
         // 账单归属用户 ID
         'tg_belong_uid',
+        // 账单归属用户昵称
+        'tg_belong_nickname',
         // Telegram 消息 ID（用于幂等）
         'tg_msg_id',
         // 逻辑删除标记
         'is_delete',
         // 金额（单位：分）
         'amount',
+        // 币种类型（R/U）
+        'currency_type',
+        // Telegram 群名称
+        'tg_g_name',
         // 创建日期（Asia/Shanghai，DATE）
         'created_at',
         // 更新日期（Asia/Shanghai，DATE）
@@ -43,6 +51,7 @@ class AppLedger extends Model
     protected $casts = [
         'is_delete' => 'boolean',
         'amount' => 'integer',
+        'currency_type' => 'string',
     ];
 
     /**

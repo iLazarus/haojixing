@@ -223,6 +223,28 @@ curl -sS -X POST "$BASE/api/v1/rules" \
   }'
 ~~~
 
+示例（支持 `+100 @someone` 记账）：
+
+- 推荐正则：`/^\+(\d+)([RrUu]?)?(?:\s+@(\S+))?/u`
+- 说明：`{{1}}` 为金额；`{{2}}` 为币种（R/U，可空）；`{{3}}` 为用户名（不含 `@`，可空）。
+- 系统行为：
+  - 当 `tg_belong_uid` 为空时，自动回退为 `tg_uid`（自己记自己）。
+  - 当 `tg_belong_uid` 为用户名时，执行器会自动在 `tg_user` 中解析为 `tg_uid`；未解析到会返回 422。
+  - 当 `currency_type` 为空时默认 `R`；匹配到 `r/u` 时会统一转为大写 `R/U`。
+
+~~~bash
+curl -sS -X POST "$BASE/api/v1/rules" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "remark":"+100 @someone 记账",
+    "regular":"/^\\+(\\d+)([RrUu]?)?(?:\\s+@(\\S+))?/u",
+    "method":"POST",
+    "api":"http://localhost/api/v1/ledgers",
+    "data_map":"{\"api_payload\":{\"tg_gid\":\"{{tg_gid}}\",\"tg_uid\":\"{{tg_uid}}\",\"tg_belong_uid\":\"{{3}}\",\"tg_msg_id\":\"{{tg_msg_id}}\",\"amount\":\"{{1}}\",\"currency_type\":\"{{2}}\",\"is_delete\":false},\"reply_template\":\"记账成功：金额 {{result.amount}}，币种 {{result.currency_type}}，归属UID {{result.tg_belong_uid}}\"}",
+    "is_active":true
+  }'
+~~~
+
 ### GET /api/v1/rules/{id}
 
 ~~~bash
@@ -334,6 +356,7 @@ curl -sS -X POST "$BASE/api/v1/groups/$TG_GID/rules/match" \
 - tg_belong_uid: required, integer, min:1
 - tg_msg_id: required, integer, min:1
 - amount: required, integer（单位：分）
+- currency_type: sometimes, string, in:R,U（默认 R）
 - is_delete: boolean
 
 ~~~bash
@@ -345,6 +368,7 @@ curl -sS -X POST "$BASE/api/v1/ledgers" \
     "tg_belong_uid":900002,
     "tg_msg_id":700001,
     "amount":12345,
+    "currency_type":"R",
     "is_delete":false
   }'
 ~~~

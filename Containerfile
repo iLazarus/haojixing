@@ -10,6 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && docker-php-ext-install -j"$(nproc)" pdo pdo_pgsql bcmath opcache \
     && rm -rf /var/lib/apt/lists/*
 
+# 关闭 php-fpm 访问日志，避免容器控制台输出 "POST /index.php" 这类访问行
+RUN sed -ri 's|^access\.log[[:space:]]*=.*$|access.log = /dev/null|' /usr/local/etc/php-fpm.d/docker.conf
+
 # 调试扩展默认关闭，仅在构建参数启用
 RUN if [ "$ENABLE_XDEBUG" = "1" ]; then \
       pecl install xdebug && docker-php-ext-enable xdebug; \

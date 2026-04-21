@@ -102,6 +102,7 @@ return [
                 'stream' => 'php://stderr',
             ],
             'formatter' => env('LOG_STDERR_FORMATTER'),
+            'tap' => [App\Logging\ColorStderrTap::class],
             'processors' => [PsrLogMessageProcessor::class],
         ],
 

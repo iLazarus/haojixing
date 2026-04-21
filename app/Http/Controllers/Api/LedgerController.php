@@ -24,6 +24,16 @@ class LedgerController extends Controller
     ) {
     }
 
+    public function index(Request $request): JsonResponse
+    {
+        $limit = (int) $request->query('limit', 200);
+        $tgGidRaw = $request->query('tg_gid');
+        $tgGid = is_numeric($tgGidRaw) ? (int) $tgGidRaw : null;
+        $data = $this->ledgerService->list(max(1, min(1000, $limit)), $tgGid);
+
+        return $this->success($request, $data);
+    }
+
     public function listByGroup(int $tgGid, Request $request): JsonResponse
     {
         $limit = (int) $request->query('limit', 200);
@@ -85,6 +95,7 @@ class LedgerController extends Controller
                 'tg_gid' => $ledger->tg_gid,
                 'tg_msg_id' => $ledger->tg_msg_id,
                 'amount_cent' => $ledger->amount,
+            'currency_type' => $ledger->currency_type,
                 'created_at' => $ledger->created_at,
                 'updated_at' => $ledger->updated_at,
             ]);

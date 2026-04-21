@@ -25,6 +25,10 @@ class TgGroup extends Model
         'tg_gid',
         // 群主 Telegram 用户 ID
         'tg_oid',
+        // Telegram 群名称
+        'tg_g_name',
+        // 群主昵称
+        'tg_o_nickname',
         // 群是否开启记账/结算
         'is_open',
         // 基础币种标识

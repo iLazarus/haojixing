@@ -15,6 +15,10 @@ class LedgerUpdateRequest extends ApiFormRequest
     {
         return [
             'amount' => ['sometimes', 'integer'],
+            'currency_type' => ['sometimes', 'string', 'in:R,U'],
+            'tg_nickname' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'tg_belong_nickname' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'tg_g_name' => ['sometimes', 'nullable', 'string', 'max:255'],
             'is_delete' => ['sometimes', 'boolean'],
         ];
     }

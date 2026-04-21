@@ -16,6 +16,8 @@ class MemberStoreRequest extends ApiFormRequest
         return [
             'tg_gid' => ['required', 'integer', 'min:1'],
             'tg_uid' => ['required', 'integer', 'min:1'],
+            'tg_g_name' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'tg_nickname' => ['sometimes', 'nullable', 'string', 'max:255'],
             'role' => ['required', 'in:operator,consumer'],
             'is_active' => ['sometimes', 'boolean'],
         ];
