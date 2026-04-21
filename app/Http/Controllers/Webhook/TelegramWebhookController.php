@@ -190,35 +190,19 @@ class TelegramWebhookController extends Controller
                 ]);
             }
 
-        $groupIds = $this->resolveGroupIds($rawGroupId);
-        $result = null;
-
-        foreach ($groupIds as $tgGid) {
-            $result = $this->ruleMatchingService->match(
-                $tgGid,
-                $tgMsgId,
-                $text,
-                true,
-                $context
-            );
-
-            if (((int) ($result['hit_count'] ?? 0)) > 0) {
-                Log::channel('stderr')->info('telegram_rule_match_group_hit', [
-                    'raw_group_id' => $rawGroupId,
-                    'matched_group_id' => $tgGid,
-                    'tg_msg_id' => $tgMsgId,
-                    'hit_count' => (int) ($result['hit_count'] ?? 0),
-                ]);
-                break;
-            }
-        }
+        $result = $this->ruleMatchingService->match(
+            $rawGroupId,
+            $tgMsgId,
+            $text,
+            true,
+            $context
+        );
 
         $replyText = $this->extractReplyTextFromMatchResult($result);
         Log::channel('stderr')->info('telegram_rule_match_result', [
             'tg_gid' => $rawGroupId,
             'tg_msg_id' => $tgMsgId,
             'text_preview' => mb_substr($text, 0, 120),
-            'candidate_group_ids' => $groupIds,
             'hit_count' => (int) ($result['hit_count'] ?? 0),
             'reply_ready' => $replyText !== null && trim($replyText) !== '',
             'reply_preview' => is_string($replyText) ? mb_substr($replyText, 0, 120) : null,
@@ -229,6 +213,7 @@ class TelegramWebhookController extends Controller
             $this->markInboxResult('已处理', '规则命中并已回复', null, [
                 '处理场景' => '规则匹配',
                 '命中规则数' => (int) ($result['hit_count'] ?? 0),
+                '历史命中规则数' => (int) ($result['already_hit_count'] ?? 0),
                 '是否发送回复' => '是',
             ]);
         } else {
@@ -238,16 +223,19 @@ class TelegramWebhookController extends Controller
                 'reason' => ((int) ($result['hit_count'] ?? 0)) > 0 ? 'hit_without_reply_text' : 'no_rule_hit',
             ]);
 
-            $this->markInboxResult(
-                '已处理',
-                ((int) ($result['hit_count'] ?? 0)) > 0 ? '规则命中但无需回复' : '未命中任何规则',
-                null,
-                [
-                    '处理场景' => '规则匹配',
-                    '命中规则数' => (int) ($result['hit_count'] ?? 0),
-                    '是否发送回复' => '否',
-                ]
-            );
+            $hitCount = (int) ($result['hit_count'] ?? 0);
+            $alreadyHitCount = (int) ($result['already_hit_count'] ?? 0);
+            $resultText = $hitCount > 0
+                ? '规则命中但无需回复'
+                : ($alreadyHitCount > 0 ? '幂等跳过（历史已命中规则）' : '未命中任何规则');
+
+            $this->markInboxResult('已处理', $resultText, null, [
+                '处理场景' => '规则匹配',
+                '命中规则数' => $hitCount,
+                '历史命中规则数' => $alreadyHitCount,
+                '历史命中规则ID' => is_array($result['already_hit_rule_ids'] ?? null) ? $result['already_hit_rule_ids'] : [],
+                '是否发送回复' => '否',
+            ]);
         }
 
             return response()->json([
@@ -1174,15 +1162,4 @@ class TelegramWebhookController extends Controller
         return null;
     }
 
-    private function resolveGroupIds(int $rawGroupId): array
-    {
-        $groupIds = [$rawGroupId];
-
-        // 兼容历史正数群 ID 存量，优先尝试原始值，未命中再尝试绝对值。
-        if ($rawGroupId < 0) {
-            $groupIds[] = abs($rawGroupId);
-        }
-
-        return array_values(array_unique($groupIds));
-    }
 }

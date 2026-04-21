@@ -44,12 +44,92 @@ class RuleMatchingService
             'merged_rule_count' => count($mergedRows),
             'already_hit_count' => count($alreadyHitMap),
             'execute_api' => $executeApi,
+            'pass' => 'primary',
         ]);
 
+        $hits = $this->collectHits(
+            $mergedRows,
+            $alreadyHitMap,
+            $tgGid,
+            $tgMsgId,
+            $message,
+            $runtimeContext,
+            $executeApi,
+        );
+
+        if ($hits === [] && count($alreadyHitMap) === 0) {
+            $reloadedRows = $this->loadMergedRules($tgGid, true);
+            Log::channel('stderr')->info('rule_match_retry_reloaded_rules', [
+                'tg_gid' => $tgGid,
+                'tg_msg_id' => $tgMsgId,
+                'before_merged_rule_count' => count($mergedRows),
+                'after_merged_rule_count' => count($reloadedRows),
+                'message_preview' => mb_substr($message, 0, 120),
+            ]);
+
+            if ($reloadedRows !== []) {
+                Log::channel('stderr')->info('rule_match_candidates_loaded', [
+                    'tg_gid' => $tgGid,
+                    'tg_msg_id' => $tgMsgId,
+                    'message_preview' => mb_substr($message, 0, 120),
+                    'group_rule_count' => count(array_filter($reloadedRows, static fn (array $row): bool => ($row['source'] ?? '') === 'group')),
+                    'default_rule_count' => count(array_filter($reloadedRows, static fn (array $row): bool => ($row['source'] ?? '') === 'default')),
+                    'merged_rule_count' => count($reloadedRows),
+                    'already_hit_count' => count($alreadyHitMap),
+                    'execute_api' => $executeApi,
+                    'pass' => 'retry_after_cache_refresh',
+                ]);
+
+                $hits = $this->collectHits(
+                    $reloadedRows,
+                    $alreadyHitMap,
+                    $tgGid,
+                    $tgMsgId,
+                    $message,
+                    $runtimeContext,
+                    $executeApi,
+                );
+            }
+        }
+
+        Log::channel('stderr')->info('rule_match_finished', [
+            'tg_gid' => $tgGid,
+            'tg_msg_id' => $tgMsgId,
+            'hit_count' => count($hits),
+            'hit_rule_ids' => array_map(static fn (array $hit): int => (int) ($hit['app_rule_id'] ?? 0), $hits),
+            'cost_ms' => (int) ((microtime(true) - $startedAt) * 1000),
+        ]);
+
+        return [
+            'tg_gid' => $tgGid,
+            'tg_msg_id' => $tgMsgId,
+            'message' => $message,
+            'hit_count' => count($hits),
+            'already_hit_count' => count($alreadyHitMap),
+            'already_hit_rule_ids' => array_values(array_map(static fn ($id): int => (int) $id, array_keys($alreadyHitMap))),
+            'hits' => $hits,
+        ];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $rows
+     * @param array<int, bool> $alreadyHitMap
+     * @param array<string, mixed> $runtimeContext
+     * @return array<int, array<string, mixed>>
+     */
+    private function collectHits(
+        array $rows,
+        array &$alreadyHitMap,
+        int $tgGid,
+        int $tgMsgId,
+        string $message,
+        array $runtimeContext,
+        bool $executeApi,
+    ): array {
         $hits = [];
 
         /** @var array<string, mixed> $row */
-        foreach ($mergedRows as $row) {
+        foreach ($rows as $row) {
             $appRuleId = (int) ($row['app_rule_id'] ?? 0);
             if ($appRuleId <= 0) {
                 continue;
@@ -110,21 +190,7 @@ class RuleMatchingService
             }
         }
 
-        Log::channel('stderr')->info('rule_match_finished', [
-            'tg_gid' => $tgGid,
-            'tg_msg_id' => $tgMsgId,
-            'hit_count' => count($hits),
-            'hit_rule_ids' => array_map(static fn (array $hit): int => (int) ($hit['app_rule_id'] ?? 0), $hits),
-            'cost_ms' => (int) ((microtime(true) - $startedAt) * 1000),
-        ]);
-
-        return [
-            'tg_gid' => $tgGid,
-            'tg_msg_id' => $tgMsgId,
-            'message' => $message,
-            'hit_count' => count($hits),
-            'hits' => $hits,
-        ];
+        return $hits;
     }
 
     private function writeHitLog(int $tgGid, int $tgMsgId, int $appRuleId): void
@@ -152,11 +218,18 @@ class RuleMatchingService
     /**
      * @return array<int, array<string, mixed>>
      */
-    private function loadMergedRules(int $tgGid): array
+    private function loadMergedRules(int $tgGid, bool $forceRefresh = false): array
     {
         $version = (int) Cache::get('rule:cache:version', 1);
+        $mergedKey = "rule:merged:v{$version}:{$tgGid}";
+        $defaultKey = "rule:default:active:v{$version}";
 
-        return Cache::remember("rule:merged:v{$version}:{$tgGid}", now()->addSeconds(3), function () use ($tgGid, $version): array {
+        if ($forceRefresh) {
+            Cache::forget($mergedKey);
+            Cache::forget($defaultKey);
+        }
+
+        return Cache::remember($mergedKey, now()->addSeconds(3), function () use ($tgGid, $defaultKey): array {
             $boundRows = GroupRule::query()
                 ->select([
                     'group_rule.id as group_rule_id',
@@ -210,7 +283,7 @@ class RuleMatchingService
                 ];
             }
 
-            $defaultRows = Cache::remember("rule:default:active:v{$version}", now()->addSeconds(5), function () {
+            $defaultRows = Cache::remember($defaultKey, now()->addSeconds(5), function () {
                 return AppRule::query()
                     ->select([
                         'id as rule_id',
