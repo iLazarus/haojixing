@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Rule;
 
 use App\Models\TgUser;
+use App\Services\Group\GroupSyncService;
 use App\Services\Group\GroupService;
 use App\Services\Ledger\LedgerService;
 use App\Models\AppRule;
@@ -17,9 +18,9 @@ class RuleActionExecutor
 {
     public function __construct(
         private readonly GroupService $groupService,
-        private readonly LedgerService $ledgerService
-    )
-    {
+        private readonly LedgerService $ledgerService,
+        private readonly GroupSyncService $groupSyncService,
+    ) {
     }
 
     public function buildAction(AppRule $rule, array $matches, array $context): array
@@ -229,6 +230,46 @@ class RuleActionExecutor
                     'ok' => false,
                     'body' => ['message' => $e->getMessage()],
                     'raw' => (string) json_encode(['message' => $e->getMessage()], JSON_UNESCAPED_UNICODE),
+                    'transport' => 'internal',
+                ];
+            } catch (Throwable $e) {
+                Log::channel('stderr')->warning('rule_api_internal_call_failed', [
+                    'method' => $method,
+                    'url' => $url,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return [
+                    'method' => $method,
+                    'url' => $url,
+                    'status' => 500,
+                    'ok' => false,
+                    'body' => ['message' => 'internal api execution failed'],
+                    'raw' => '{"message":"internal api execution failed"}',
+                    'error' => $e->getMessage(),
+                    'transport' => 'internal',
+                ];
+            }
+        }
+
+        if ($method === 'POST' && preg_match('#^/api/v1/groups/(-?\d+)/sync$#', $path, $matches) === 1) {
+            try {
+                $tgGid = (int) $matches[1];
+                $result = $this->groupSyncService->refresh(
+                    $tgGid,
+                    isset($payload['trigger_tg_uid']) ? (int) $payload['trigger_tg_uid'] : null,
+                    (string) ($payload['trigger_nickname'] ?? ''),
+                    [],
+                    isset($payload['fallback_group_name']) ? (string) $payload['fallback_group_name'] : null,
+                );
+
+                return [
+                    'method' => $method,
+                    'url' => $url,
+                    'status' => 200,
+                    'ok' => true,
+                    'body' => $result,
+                    'raw' => (string) json_encode($result, JSON_UNESCAPED_UNICODE),
                     'transport' => 'internal',
                 ];
             } catch (Throwable $e) {

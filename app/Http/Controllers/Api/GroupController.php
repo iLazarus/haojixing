@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Requests\GroupSyncRequest;
 use App\Http\Requests\GroupStoreRequest;
 use App\Http\Requests\GroupUpdateRequest;
+use App\Services\Group\GroupSyncService;
 use App\Services\Group\GroupService;
 use App\Support\ApiResponder;
 use Illuminate\Http\JsonResponse;
@@ -16,8 +18,10 @@ class GroupController extends Controller
 {
     use ApiResponder;
 
-    public function __construct(private readonly GroupService $groupService)
-    {
+    public function __construct(
+        private readonly GroupService $groupService,
+        private readonly GroupSyncService $groupSyncService,
+    ) {
     }
 
     public function index(Request $request): JsonResponse
@@ -60,5 +64,20 @@ class GroupController extends Controller
         $deleted = $this->groupService->deleteByTgGid($tgGid);
 
         return $this->success($request, ['deleted' => $deleted]);
+    }
+
+    public function sync(GroupSyncRequest $request, int $tgGid): JsonResponse
+    {
+        $payload = $request->validated();
+
+        $data = $this->groupSyncService->refresh(
+            $tgGid,
+            isset($payload['trigger_tg_uid']) ? (int) $payload['trigger_tg_uid'] : null,
+            (string) ($payload['trigger_nickname'] ?? ''),
+            [],
+            isset($payload['fallback_group_name']) ? (string) $payload['fallback_group_name'] : null,
+        );
+
+        return $this->success($request, $data);
     }
 }

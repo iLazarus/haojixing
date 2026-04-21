@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Webhook;
 
+use App\Services\Group\GroupSyncService;
 use App\Services\Rule\RuleMatchingService;
 use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Http\JsonResponse;
@@ -16,8 +17,10 @@ use Throwable;
 
 class TelegramWebhookController extends Controller
 {
-    public function __construct(private readonly RuleMatchingService $ruleMatchingService)
-    {
+    public function __construct(
+        private readonly RuleMatchingService $ruleMatchingService,
+        private readonly GroupSyncService $groupSyncService,
+    ) {
     }
 
     public function handle(Request $request): JsonResponse
@@ -35,39 +38,46 @@ class TelegramWebhookController extends Controller
                 return $this->ignored('invalid_payload');
             }
 
-        $createdGroupContext = $this->syncGroupWhenBotAdded($payload);
-        $createdGroupId = $createdGroupContext['tg_gid'] ?? null;
-        $memberChangedContext = $this->extractMemberChangedContext($payload);
-        $memberChangedGroupId = $memberChangedContext['tg_gid'] ?? null;
-        $memberChangedCreatedContext = null;
-
-        if ($memberChangedContext !== null && $memberChangedGroupId !== $createdGroupId) {
-            $ensureResult = $this->ensureGroupExists($memberChangedContext, 'member_changed');
-            if ($ensureResult === 'created') {
-                $memberChangedCreatedContext = $memberChangedContext;
+            $updateId = $this->toIntOrNull($payload['update_id'] ?? null);
+            if ($this->isDuplicateUpdate($updateId)) {
+                return $this->ignored('duplicate_update', [
+                    'update_id' => $updateId,
+                ]);
             }
-        }
 
-        if ($createdGroupId !== null) {
-            $this->syncUsersWhenGroupMemberChanged($createdGroupId, $payload);
-        }
+            $createdGroupContext = $this->syncGroupWhenBotAdded($payload);
+            $createdGroupId = $createdGroupContext['tg_gid'] ?? null;
+            $memberChangedContext = $this->extractMemberChangedContext($payload);
+            $memberChangedGroupId = $memberChangedContext['tg_gid'] ?? null;
+            $memberChangedCreatedContext = null;
 
-        if ($memberChangedGroupId !== null && $memberChangedGroupId !== $createdGroupId) {
-            $this->syncUsersWhenGroupMemberChanged($memberChangedGroupId, $payload);
-        }
+            if ($memberChangedContext !== null && $memberChangedGroupId !== $createdGroupId) {
+                $ensureResult = $this->ensureGroupExists($memberChangedContext, 'member_changed');
+                if ($ensureResult === 'created') {
+                    $memberChangedCreatedContext = $memberChangedContext;
+                }
+            }
 
-        if ($createdGroupContext !== null) {
-            $this->sendGroupRefreshNotice($createdGroupContext);
-        } elseif ($memberChangedCreatedContext !== null) {
-            $this->sendGroupRefreshNotice($memberChangedCreatedContext);
-        }
+            if ($createdGroupId !== null) {
+                $this->syncUsersWhenGroupMemberChanged($createdGroupId, $payload, $createdGroupContext);
+            }
 
-        [$message, $updateType] = $this->extractMessage($payload);
-        Log::channel('stderr')->info('telegram_webhook_received', [
-            'update_id' => $this->toIntOrNull($payload['update_id'] ?? null),
-            'update_type' => $updateType,
-            'update_keys' => array_keys($payload),
-        ]);
+            if ($memberChangedGroupId !== null && $memberChangedGroupId !== $createdGroupId) {
+                $this->syncUsersWhenGroupMemberChanged($memberChangedGroupId, $payload, $memberChangedContext);
+            }
+
+            if ($createdGroupContext !== null && (string) ($createdGroupContext['ensure_result'] ?? '') === 'created') {
+                $this->sendGroupRefreshNotice($createdGroupContext);
+            } elseif ($memberChangedCreatedContext !== null) {
+                $this->sendGroupRefreshNotice($memberChangedCreatedContext);
+            }
+
+            [$message, $updateType] = $this->extractMessage($payload);
+            Log::channel('stderr')->info('telegram_webhook_received', [
+                'update_id' => $this->toIntOrNull($payload['update_id'] ?? null),
+                'update_type' => $updateType,
+                'update_keys' => array_keys($payload),
+            ]);
 
         if ($message === null) {
             return $this->ignored('unsupported_update', [
@@ -119,7 +129,46 @@ class TelegramWebhookController extends Controller
             'update_id' => $this->toIntOrNull($payload['update_id'] ?? null),
         ];
 
-        $this->logIncomingGroupMessage($rawGroupId, $tgMsgId, $text, $context);
+            $this->logIncomingGroupMessage($rawGroupId, $tgMsgId, $text, $context);
+
+            if ($this->isRefreshCommand($text)) {
+                $senderUid = $this->toIntOrNull($message['from']['id'] ?? null);
+                if (!$this->groupSyncService->isGroupOwner($rawGroupId, $senderUid)) {
+                    $this->sendTelegramTextMessage($rawGroupId, '仅群主可以执行刷新', 'manual_refresh_forbidden');
+
+                    return response()->json([
+                        'ok' => true,
+                        'ignored' => 'refresh_forbidden',
+                    ]);
+                }
+
+                $seedUsers = [];
+                $this->collectVisibleUsersFromPayload($seedUsers, $payload);
+                $syncResult = $this->groupSyncService->refresh(
+                    $rawGroupId,
+                    $senderUid,
+                    (string) ($context['sender'] ?? ''),
+                    $seedUsers,
+                    (string) ($context['chat_title'] ?? ''),
+                );
+
+                Log::channel('stderr')->info('telegram_manual_refresh_finished', [
+                    'tg_gid' => $rawGroupId,
+                    'tg_uid' => $senderUid,
+                    'sync_result' => $syncResult,
+                ]);
+
+                $this->sendTelegramTextMessage($rawGroupId, '已刷新群信息、用户信息和成员信息', 'manual_refresh_done');
+
+                return response()->json([
+                    'ok' => true,
+                    'matched' => 0,
+                    'replied' => true,
+                    'data' => [
+                        'sync' => $syncResult,
+                    ],
+                ]);
+            }
 
         $groupIds = $this->resolveGroupIds($rawGroupId);
         $result = null;
@@ -197,7 +246,13 @@ class TelegramWebhookController extends Controller
 
         $result = $this->ensureGroupExists($context, 'bot_added');
 
-        return $result === 'created' ? $context : null;
+        if ($result === 'failed') {
+            return null;
+        }
+
+        $context['ensure_result'] = $result;
+
+        return $context;
     }
 
     private function sendGroupRefreshNotice(array $context): void
@@ -383,64 +438,46 @@ class TelegramWebhookController extends Controller
         return 'created';
     }
 
-    private function syncUsersWhenGroupMemberChanged(int $tgGid, array $payload): void
+    private function syncUsersWhenGroupMemberChanged(int $tgGid, array $payload, ?array $context = null): void
     {
         $users = [];
-
         $this->collectVisibleUsersFromPayload($users, $payload);
 
-        // Telegram Bot API 无法直接枚举全量群成员，每次变动时尽量刷新管理员列表。
-        $token = (string) config('services.telegram.bot_token', '');
-        if ($token !== '') {
-            $adminResponse = Http::timeout(10)->acceptJson()->post("https://api.telegram.org/bot{$token}/getChatAdministrators", [
-                'chat_id' => $tgGid,
-            ]);
-
-            if ($adminResponse->ok()) {
-                $admins = $adminResponse->json('result');
-                if (is_array($admins)) {
-                    foreach ($admins as $admin) {
-                        if (!is_array($admin)) {
-                            continue;
-                        }
-
-                        $adminUser = is_array($admin['user'] ?? null) ? $admin['user'] : null;
-                        if ($adminUser === null) {
-                            continue;
-                        }
-
-                        $this->pushTelegramUser($users, $adminUser);
-                    }
-                }
-            } else {
-                Log::channel('stderr')->warning('group_user_sync_admin_fetch_failed', [
-                    'tg_gid' => $tgGid,
-                    'status' => $adminResponse->status(),
-                    'body' => mb_substr((string) $adminResponse->body(), 0, 500),
-                ]);
-            }
+        $triggerUid = $this->toIntOrNull($context['tg_oid'] ?? null);
+        if ($triggerUid === null) {
+            $triggerUid = $this->toIntOrNull($payload['message']['from']['id'] ?? null)
+                ?? $this->toIntOrNull($payload['chat_member']['from']['id'] ?? null)
+                ?? $this->toIntOrNull($payload['my_chat_member']['from']['id'] ?? null);
         }
 
-        $summary = [
-            'created' => 0,
-            'updated' => 0,
-            'skipped' => 0,
-            'failed' => 0,
-        ];
-
-        foreach ($users as $user) {
-            $upsert = $this->upsertTelegramUser($user);
-            $summary[$upsert]++;
+        $triggerNickname = trim((string) ($context['sender'] ?? ''));
+        if ($triggerNickname === '') {
+            $triggerNickname = trim((string) ($payload['message']['from']['first_name'] ?? ''));
         }
 
-        Log::channel('stderr')->info('group_user_sync_finished', [
+        $fallbackGroupName = trim((string) ($context['chat_title'] ?? ''));
+        if ($fallbackGroupName === '') {
+            $fallbackGroupName = trim((string) ($payload['message']['chat']['title'] ?? ''));
+        }
+
+        $syncResult = $this->groupSyncService->refresh(
+            $tgGid,
+            $triggerUid,
+            $triggerNickname,
+            $users,
+            $fallbackGroupName,
+        );
+
+        Log::channel('stderr')->info('group_user_member_sync_finished', [
             'tg_gid' => $tgGid,
             'candidate_count' => count($users),
-            'created' => $summary['created'],
-            'updated' => $summary['updated'],
-            'skipped' => $summary['skipped'],
-            'failed' => $summary['failed'],
+            'sync_result' => $syncResult,
         ]);
+    }
+
+    private function isRefreshCommand(string $text): bool
+    {
+        return trim($text) === '刷新';
     }
 
     private function collectVisibleUsersFromPayload(array &$users, array $payload): void

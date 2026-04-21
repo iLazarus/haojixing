@@ -16,6 +16,7 @@ Route::prefix('v1')->group(function (): void {
     Route::post('/groups', [GroupController::class, 'store']);
     Route::get('/groups/{tgGid}', [GroupController::class, 'show']);
     Route::patch('/groups/{tgGid}', [GroupController::class, 'update']);
+    Route::post('/groups/{tgGid}/sync', [GroupController::class, 'sync']);
     Route::delete('/groups/{tgGid}', [GroupController::class, 'destroy']);
 
     Route::get('/users', [UserController::class, 'index']);
