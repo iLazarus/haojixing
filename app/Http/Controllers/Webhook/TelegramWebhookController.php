@@ -29,6 +29,7 @@ class TelegramWebhookController extends Controller
     public function handle(Request $request): JsonResponse
     {
         $this->currentInboxId = null;
+        $updateLock = null;
 
         Log::channel('stderr')->info('telegram_webhook_handle_enter', [
             'content_type' => (string) $request->header('Content-Type', ''),
@@ -44,10 +45,35 @@ class TelegramWebhookController extends Controller
             }
 
             $updateId = $this->toIntOrNull($payload['update_id'] ?? null);
-            $this->currentInboxId = $this->recordInboxReceived($payload, $updateId);
-            if ($this->isDuplicateUpdate($updateId)) {
-                return $this->ignored('duplicate_update', [
+            $inboxRecord = $this->recordInboxReceived($payload, $updateId);
+            $this->currentInboxId = (int) ($inboxRecord['id'] ?? 0);
+
+            if ($this->isInboxAlreadyProcessed($inboxRecord)) {
+                Log::channel('stderr')->warning('telegram_duplicate_update_already_processed', [
                     'update_id' => $updateId,
+                    'inbox_id' => $this->currentInboxId,
+                    'status' => (string) ($inboxRecord['status'] ?? ''),
+                    'result_code' => (string) ($inboxRecord['result_code'] ?? ''),
+                    'attempt_count' => (int) ($inboxRecord['attempt_count'] ?? 1),
+                ]);
+
+                return response()->json([
+                    'ok' => true,
+                    'ignored' => 'duplicate_update_already_processed',
+                ]);
+            }
+
+            $updateLock = $this->acquireUpdateProcessingLock($updateId);
+            if ($updateId !== null && $updateLock === null) {
+                Log::channel('stderr')->warning('telegram_duplicate_update_inflight', [
+                    'update_id' => $updateId,
+                    'inbox_id' => $this->currentInboxId,
+                    'attempt_count' => (int) ($inboxRecord['attempt_count'] ?? 1),
+                ]);
+
+                return response()->json([
+                    'ok' => true,
+                    'ignored' => 'duplicate_update_inflight',
                 ]);
             }
 
@@ -263,6 +289,10 @@ class TelegramWebhookController extends Controller
                 'ok' => true,
                 'ignored' => 'internal_error',
             ]);
+        } finally {
+            if (is_object($updateLock) && method_exists($updateLock, 'release')) {
+                $updateLock->release();
+            }
         }
     }
 
@@ -1010,17 +1040,7 @@ class TelegramWebhookController extends Controller
         return null;
     }
 
-    private function isDuplicateUpdate(?int $updateId): bool
-    {
-        if ($updateId === null) {
-            return false;
-        }
-
-        // Telegram 可能因为网络抖动重试同一 update_id，这里做短期去重。
-        return !Cache::add("telegram:webhook:update:{$updateId}", 1, now()->addMinutes(5));
-    }
-
-    private function recordInboxReceived(array $payload, ?int $updateId): ?int
+    private function recordInboxReceived(array $payload, ?int $updateId): array
     {
         [$message, $updateType] = $this->extractMessage($payload);
         $chat = is_array($message['chat'] ?? null) ? $message['chat'] : null;
@@ -1032,7 +1052,7 @@ class TelegramWebhookController extends Controller
         $now = now();
 
         if ($updateId === null) {
-            return (int) DB::table('tg_update_inbox')->insertGetId([
+            $insertedId = (int) DB::table('tg_update_inbox')->insertGetId([
                 'update_id' => null,
                 'update_type' => $updateType,
                 'chat_id' => $chatId,
@@ -1049,6 +1069,14 @@ class TelegramWebhookController extends Controller
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);
+
+            return [
+                'id' => $insertedId,
+                'status' => '已接收',
+                'result_code' => '',
+                'processed_at' => null,
+                'attempt_count' => 1,
+            ];
         }
 
         $exists = DB::table('tg_update_inbox')
@@ -1056,7 +1084,7 @@ class TelegramWebhookController extends Controller
             ->first();
 
         if ($exists === null) {
-            return (int) DB::table('tg_update_inbox')->insertGetId([
+            $insertedId = (int) DB::table('tg_update_inbox')->insertGetId([
                 'update_id' => $updateId,
                 'update_type' => $updateType,
                 'chat_id' => $chatId,
@@ -1073,6 +1101,14 @@ class TelegramWebhookController extends Controller
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);
+
+            return [
+                'id' => $insertedId,
+                'status' => '已接收',
+                'result_code' => '',
+                'processed_at' => null,
+                'attempt_count' => 1,
+            ];
         }
 
         $nextAttemptCount = (int) ($exists->attempt_count ?? 1) + 1;
@@ -1084,17 +1120,39 @@ class TelegramWebhookController extends Controller
                 'message_id' => $messageId,
                 'message_text' => $messageText,
                 'payload' => $payloadText,
-                'status' => '已接收',
-                'result_code' => '',
-                'process_detail' => null,
                 'attempt_count' => $nextAttemptCount,
-                'last_error' => null,
                 'received_at' => $now,
-                'processed_at' => null,
                 'updated_at' => $now,
             ]);
 
-        return (int) $exists->id;
+        return [
+            'id' => (int) $exists->id,
+            'status' => (string) ($exists->status ?? ''),
+            'result_code' => (string) ($exists->result_code ?? ''),
+            'processed_at' => $exists->processed_at ?? null,
+            'attempt_count' => $nextAttemptCount,
+        ];
+    }
+
+    private function isInboxAlreadyProcessed(array $inboxRecord): bool
+    {
+        $status = trim((string) ($inboxRecord['status'] ?? ''));
+        if ($status !== '已处理') {
+            return false;
+        }
+
+        return ($inboxRecord['processed_at'] ?? null) !== null;
+    }
+
+    private function acquireUpdateProcessingLock(?int $updateId): mixed
+    {
+        if ($updateId === null) {
+            return null;
+        }
+
+        $lock = Cache::lock("telegram:webhook:update:lock:{$updateId}", 15);
+
+        return $lock->get() ? $lock : null;
     }
 
     private function markInboxResult(string $status, string $resultCode, ?string $lastError = null, ?array $processDetail = null): void
