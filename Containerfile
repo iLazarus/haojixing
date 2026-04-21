@@ -25,6 +25,7 @@ RUN groupmod -o -g "${APP_GID}" www-data \
 # PHP-FPM 健康探针相关配置
 RUN { \
       echo '[www]'; \
+    echo 'access.log = /dev/null'; \
       echo 'ping.path = /fpm-ping'; \
       echo 'pm.status_path = /fpm-status'; \
     } > /usr/local/etc/php-fpm.d/zz-healthcheck.conf

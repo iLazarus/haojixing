@@ -154,7 +154,9 @@ class RuleMatchingService
      */
     private function loadMergedRules(int $tgGid): array
     {
-        return Cache::remember("rule:merged:{$tgGid}", now()->addSeconds(3), function () use ($tgGid): array {
+        $version = (int) Cache::get('rule:cache:version', 1);
+
+        return Cache::remember("rule:merged:v{$version}:{$tgGid}", now()->addSeconds(3), function () use ($tgGid, $version): array {
             $boundRows = GroupRule::query()
                 ->select([
                     'group_rule.id as group_rule_id',
@@ -208,7 +210,7 @@ class RuleMatchingService
                 ];
             }
 
-            $defaultRows = Cache::remember('rule:default:active', now()->addSeconds(5), function () {
+            $defaultRows = Cache::remember("rule:default:active:v{$version}", now()->addSeconds(5), function () {
                 return AppRule::query()
                     ->select([
                         'id as rule_id',

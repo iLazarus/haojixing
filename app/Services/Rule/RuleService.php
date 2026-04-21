@@ -7,6 +7,7 @@ namespace App\Services\Rule;
 use App\Models\AppRule;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Cache;
 
 class RuleService
 {
@@ -27,7 +28,7 @@ class RuleService
     {
         $chinaDate = $this->chinaDate();
 
-        return AppRule::query()->create([
+        $rule = AppRule::query()->create([
             'remark' => (string) ($data['remark'] ?? ''),
             'regular' => (string) $data['regular'],
             'method' => $this->normalizeMethod($data['method'] ?? null),
@@ -38,6 +39,10 @@ class RuleService
             'created_at' => $chinaDate,
             'updated_at' => $chinaDate,
         ]);
+
+        $this->bumpRuleCacheVersion();
+
+        return $rule;
     }
 
     public function updateById(int $id, array $data): ?AppRule
@@ -64,12 +69,19 @@ class RuleService
         $rule->fill($next);
         $rule->save();
 
+        $this->bumpRuleCacheVersion();
+
         return $rule->refresh();
     }
 
     public function deleteById(int $id): int
     {
-        return AppRule::query()->where('id', $id)->delete();
+        $deleted = AppRule::query()->where('id', $id)->delete();
+        if ($deleted > 0) {
+            $this->bumpRuleCacheVersion();
+        }
+
+        return $deleted;
     }
 
     private function chinaDate(): string
@@ -85,5 +97,11 @@ class RuleService
 
         $method = strtoupper(trim($value));
         return in_array($method, ['PATCH', 'POST', 'GET', 'DELETE'], true) ? $method : 'POST';
+    }
+
+    private function bumpRuleCacheVersion(): void
+    {
+        $version = (int) Cache::get('rule:cache:version', 1);
+        Cache::forever('rule:cache:version', max(1, $version + 1));
     }
 }
