@@ -25,6 +25,8 @@ class AppRule extends Model
         'remark',
         // 规则正则表达式（PCRE）
         'regular',
+        // 命中后调用 API 的 HTTP 方法
+        'method',
         // 命中后调用的 API 地址
         'api',
         // 规则扩展映射（JSON 字符串）

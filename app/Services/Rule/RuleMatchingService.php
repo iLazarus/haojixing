@@ -22,6 +22,11 @@ class RuleMatchingService
     {
         $startedAt = microtime(true);
         $mergedRows = $this->loadMergedRules($tgGid);
+        $runtimeContext = array_merge($context, [
+            'tg_gid' => $tgGid,
+            'tg_msg_id' => $tgMsgId,
+            'message' => $message,
+        ]);
 
         $alreadyHitRuleIds = RuleHitLog::query()
             ->where('tg_gid', $tgGid)
@@ -64,13 +69,15 @@ class RuleMatchingService
             $rule->id = (int) ($row['rule_id'] ?? 0);
             $rule->remark = (string) ($row['remark'] ?? '');
             $rule->regular = $regex;
+            $rule->method = array_key_exists('method', $row) && $row['method'] !== null ? (string) $row['method'] : 'POST';
             $rule->api = array_key_exists('api', $row) && $row['api'] !== null ? (string) $row['api'] : null;
             $rule->data_map = array_key_exists('data_map', $row) && $row['data_map'] !== null ? (string) $row['data_map'] : null;
             $rule->is_active = (bool) ($row['rule_active'] ?? true);
             $rule->is_default = (bool) ($row['rule_default'] ?? false);
 
-            $action = $this->actionExecutor->buildAction($rule, $matches, $context);
+            $action = $this->actionExecutor->buildAction($rule, $matches, $runtimeContext);
             $apiResult = $this->actionExecutor->executeApiIfNeeded($action, $executeApi);
+            $action['reply_text'] = $this->actionExecutor->renderReplyText($action, $matches, $runtimeContext, $apiResult);
 
             $this->writeHitLog($tgGid, $tgMsgId, $appRuleId);
             $alreadyHitMap[$appRuleId] = true;
@@ -159,6 +166,7 @@ class RuleMatchingService
                     'app_rule.id as rule_id',
                     'app_rule.remark',
                     'app_rule.regular',
+                    'app_rule.method',
                     'app_rule.api',
                     'app_rule.data_map',
                     'app_rule.is_active as rule_active',
@@ -191,6 +199,7 @@ class RuleMatchingService
                     'rule_id' => (int) ($boundRow->rule_id ?? 0),
                     'remark' => (string) ($boundRow->remark ?? ''),
                     'regular' => $regular,
+                    'method' => $boundRow->method !== null ? (string) $boundRow->method : 'POST',
                     'api' => $boundRow->api !== null ? (string) $boundRow->api : null,
                     'data_map' => $boundRow->data_map !== null ? (string) $boundRow->data_map : null,
                     'rule_active' => (bool) ($boundRow->rule_active ?? true),
@@ -205,6 +214,7 @@ class RuleMatchingService
                         'id as rule_id',
                         'remark',
                         'regular',
+                        'method',
                         'api',
                         'data_map',
                         'is_active as rule_active',
@@ -234,6 +244,7 @@ class RuleMatchingService
                     'rule_id' => (int) $defaultRule->rule_id,
                     'remark' => (string) ($defaultRule->remark ?? ''),
                     'regular' => $regular,
+                    'method' => $defaultRule->method !== null ? (string) $defaultRule->method : 'POST',
                     'api' => $defaultRule->api !== null ? (string) $defaultRule->api : null,
                     'data_map' => $defaultRule->data_map !== null ? (string) $defaultRule->data_map : null,
                     'rule_active' => (bool) ($defaultRule->rule_active ?? true),

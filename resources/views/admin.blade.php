@@ -431,14 +431,14 @@
         },
         rules: {
             label: '规则',
-            columns: ['id', 'remark', 'regular', 'api', 'is_active', 'is_default', 'updated_at'],
+            columns: ['id', 'remark', 'regular', 'method', 'api', 'is_active', 'is_default', 'updated_at'],
             listPath: '/api/v1/rules',
             createPath: () => '/api/v1/rules',
             updatePath: (f) => `/api/v1/rules/${f.id}`,
             deletePath: (f) => `/api/v1/rules/${f.id}`,
-            createFields: ['remark', 'regular', 'api', 'data_map', 'is_active', 'is_default'],
+            createFields: ['remark', 'regular', 'method', 'api', 'data_map', 'is_active', 'is_default'],
             createOmitFields: [],
-            updateFields: ['id', 'remark', 'regular', 'api', 'data_map', 'is_active', 'is_default']
+            updateFields: ['id', 'remark', 'regular', 'method', 'api', 'data_map', 'is_active', 'is_default']
         },
         groupRules: {
             label: '群规则',
@@ -777,6 +777,32 @@
             return wrap;
         }
 
+        if (key === 'method') {
+            const select = document.createElement('select');
+            select.name = `${prefix}_${key}`;
+
+            ['PATCH', 'POST', 'GET', 'DELETE'].forEach((method) => {
+                const option = document.createElement('option');
+                option.value = method;
+                option.textContent = method;
+                if (String(value || '').toUpperCase() === method) {
+                    option.selected = true;
+                }
+                select.appendChild(option);
+            });
+
+            if (!String(value || '').trim()) {
+                select.value = 'POST';
+            }
+
+            if (readonly) {
+                select.disabled = true;
+                select.title = '该字段不可编辑';
+            }
+            wrap.appendChild(select);
+            return wrap;
+        }
+
         if (key === 'data_map' || key === 'context') {
             wrap.classList.add('full');
             const textarea = document.createElement('textarea');
@@ -1039,7 +1065,7 @@
             mod.columns.forEach((col) => {
                 const td = document.createElement('td');
                 const code = document.createElement('code');
-                let val = row[col];
+                let val = formatTableValue(col, row[col]);
                 if (typeof val === 'object' && val !== null) {
                     val = JSON.stringify(val);
                 }
@@ -1050,6 +1076,25 @@
 
             bodyRows.appendChild(tr);
         });
+    }
+
+    function formatTableValue(column, value) {
+        if (!['exchange_rate', 'fee_rate'].includes(column)) {
+            return value;
+        }
+
+        if (value == null) {
+            return value;
+        }
+
+        const text = String(value).trim();
+        if (!/^-?\d+(?:\.\d+)?$/.test(text)) {
+            return value;
+        }
+
+        return text
+            .replace(/(\.\d*?[1-9])0+$/, '$1')
+            .replace(/\.0+$/, '');
     }
 
     async function loadList(showToast = true) {

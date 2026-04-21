@@ -42,4 +42,9 @@ return [
         'webhook_secret' => env('TELEGRAM_WEBHOOK_SECRET'),
     ],
 
+    'rule' => [
+        // 容器内回调时可配置内部服务地址，例如 http://nginx
+        'internal_base_url' => env('RULE_API_INTERNAL_BASE_URL', ''),
+    ],
+
 ];

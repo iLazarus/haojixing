@@ -30,6 +30,7 @@ class RuleService
         return AppRule::query()->create([
             'remark' => (string) ($data['remark'] ?? ''),
             'regular' => (string) $data['regular'],
+            'method' => $this->normalizeMethod($data['method'] ?? null),
             'api' => array_key_exists('api', $data) ? (string) $data['api'] : null,
             'data_map' => array_key_exists('data_map', $data) ? (string) $data['data_map'] : null,
             'is_active' => (bool) ($data['is_active'] ?? true),
@@ -56,6 +57,10 @@ class RuleService
             }
         }
 
+        if (array_key_exists('method', $data)) {
+            $next['method'] = $this->normalizeMethod($data['method']);
+        }
+
         $rule->fill($next);
         $rule->save();
 
@@ -70,5 +75,15 @@ class RuleService
     private function chinaDate(): string
     {
         return CarbonImmutable::now('Asia/Shanghai')->toDateString();
+    }
+
+    private function normalizeMethod(mixed $value): string
+    {
+        if (!is_string($value) || trim($value) === '') {
+            return 'POST';
+        }
+
+        $method = strtoupper(trim($value));
+        return in_array($method, ['PATCH', 'POST', 'GET', 'DELETE'], true) ? $method : 'POST';
     }
 }

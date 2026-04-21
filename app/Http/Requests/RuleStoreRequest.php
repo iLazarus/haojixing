@@ -21,6 +21,10 @@ class RuleStoreRequest extends ApiFormRequest
             }
         }
 
+        if ($this->has('method')) {
+            $merged['method'] = strtoupper(trim((string) $this->input('method', '')));
+        }
+
         if ($this->has('regular')) {
             $regular = (string) $this->input('regular', '');
             $trimmed = trim($regular);
@@ -54,6 +58,7 @@ class RuleStoreRequest extends ApiFormRequest
                     }
                 },
             ],
+            'method' => ['sometimes', 'string', 'in:PATCH,POST,GET,DELETE'],
             'api' => ['sometimes', 'nullable', 'string', 'max:2048'],
             'data_map' => [
                 'sometimes',

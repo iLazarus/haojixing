@@ -4,11 +4,18 @@ declare(strict_types=1);
 
 namespace App\Services\Rule;
 
+use App\Services\Group\GroupService;
 use App\Models\AppRule;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class RuleActionExecutor
 {
+    public function __construct(private readonly GroupService $groupService)
+    {
+    }
+
     public function buildAction(AppRule $rule, array $matches, array $context): array
     {
         $map = $this->decodeDataMap($rule->data_map);
@@ -16,7 +23,12 @@ class RuleActionExecutor
         $replyTemplate = is_string($map['reply_template'] ?? null) ? $map['reply_template'] : null;
         $replyText = $replyTemplate !== null ? $this->interpolate($replyTemplate, $matches, $context) : null;
 
-        $apiUrl = is_string($rule->api) && trim($rule->api) !== '' ? trim($rule->api) : null;
+        $apiMethod = $this->normalizeMethod($rule->method ?? null);
+        $apiTemplate = is_string($rule->api) && trim($rule->api) !== '' ? trim($rule->api) : null;
+        $apiUrl = $apiTemplate !== null ? trim($this->interpolate($apiTemplate, $matches, $context)) : null;
+        if ($apiUrl === '') {
+            $apiUrl = null;
+        }
         $apiPayload = $this->interpolateMixed($map['api_payload'] ?? [], $matches, $context);
 
         $mode = 'noop';
@@ -30,10 +42,30 @@ class RuleActionExecutor
 
         return [
             'mode' => $mode,
+            'api_method' => $apiMethod,
             'api' => $apiUrl,
             'api_payload' => $apiPayload,
+            'reply_template' => $replyTemplate,
             'reply_text' => $replyText,
         ];
+    }
+
+    public function renderReplyText(array $action, array $matches, array $context, ?array $apiResult): ?string
+    {
+        $replyTemplate = is_string($action['reply_template'] ?? null) ? $action['reply_template'] : null;
+        if ($replyTemplate === null) {
+            return is_string($action['reply_text'] ?? null) ? (string) $action['reply_text'] : null;
+        }
+
+        $runtimeContext = $context;
+        if ($apiResult !== null) {
+            $runtimeContext['api_result'] = $apiResult;
+            if (is_array($apiResult['body'] ?? null)) {
+                $runtimeContext['result'] = $apiResult['body'];
+            }
+        }
+
+        return $this->interpolate($replyTemplate, $matches, $runtimeContext);
     }
 
     public function executeApiIfNeeded(array $action, bool $executeApi): ?array
@@ -42,21 +74,199 @@ class RuleActionExecutor
             return null;
         }
 
-        $url = (string) ($action['api'] ?? '');
-        if ($url === '') {
+        $rawUrl = (string) ($action['api'] ?? '');
+        if ($rawUrl === '') {
             return null;
         }
 
+        $method = $this->normalizeMethod($action['api_method'] ?? null);
         $payload = is_array($action['api_payload'] ?? null) ? $action['api_payload'] : [];
+        $lastError = null;
 
-        $response = Http::connectTimeout(1)->timeout(2)->asJson()->post($url, $payload);
+        $internalResult = $this->tryExecuteInternalApi($method, $rawUrl, $payload);
+        if ($internalResult !== null) {
+            return $internalResult;
+        }
+
+        foreach ($this->buildApiCallCandidates($rawUrl) as $url) {
+            try {
+                $request = Http::connectTimeout(1)->timeout(2)->asJson();
+                $response = match ($method) {
+                    'PATCH' => $request->patch($url, $payload),
+                    'GET' => $request->get($url, $payload),
+                    'DELETE' => $request->delete($url, $payload),
+                    default => $request->post($url, $payload),
+                };
+
+                return [
+                    'method' => $method,
+                    'url' => $url,
+                    'status' => $response->status(),
+                    'ok' => $response->successful(),
+                    'body' => $response->json(),
+                    'raw' => $response->body(),
+                ];
+            } catch (Throwable $e) {
+                $lastError = $e;
+                Log::channel('stderr')->warning('rule_api_call_failed', [
+                    'method' => $method,
+                    'url' => $url,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
 
         return [
-            'status' => $response->status(),
-            'ok' => $response->successful(),
-            'body' => $response->json(),
-            'raw' => $response->body(),
+            'method' => $method,
+            'url' => $rawUrl,
+            'status' => null,
+            'ok' => false,
+            'body' => null,
+            'raw' => null,
+            'error' => $lastError?->getMessage() ?? 'api request failed',
         ];
+    }
+
+    private function tryExecuteInternalApi(string $method, string $url, array $payload): ?array
+    {
+        $parts = parse_url($url);
+        if (!is_array($parts)) {
+            return null;
+        }
+
+        $host = strtolower((string) ($parts['host'] ?? ''));
+        if ($host !== '' && !$this->isLocalLikeHost($host)) {
+            return null;
+        }
+
+        $path = (string) ($parts['path'] ?? '');
+        if ($method !== 'PATCH') {
+            return null;
+        }
+
+        if (preg_match('#^/api/v1/groups/(-?\d+)$#', $path, $matches) !== 1) {
+            return null;
+        }
+
+        try {
+            $tgGid = (int) $matches[1];
+            $updated = $this->groupService->updateByTgGid($tgGid, $payload);
+
+            if ($updated === null) {
+                return [
+                    'method' => $method,
+                    'url' => $url,
+                    'status' => 404,
+                    'ok' => false,
+                    'body' => ['message' => 'group not found'],
+                    'raw' => '{"message":"group not found"}',
+                    'transport' => 'internal',
+                ];
+            }
+
+            $body = $updated->toArray();
+            return [
+                'method' => $method,
+                'url' => $url,
+                'status' => 200,
+                'ok' => true,
+                'body' => $body,
+                'raw' => (string) json_encode($body, JSON_UNESCAPED_UNICODE),
+                'transport' => 'internal',
+            ];
+        } catch (Throwable $e) {
+            Log::channel('stderr')->warning('rule_api_internal_call_failed', [
+                'method' => $method,
+                'url' => $url,
+                'error' => $e->getMessage(),
+            ]);
+
+            return [
+                'method' => $method,
+                'url' => $url,
+                'status' => 500,
+                'ok' => false,
+                'body' => ['message' => 'internal api execution failed'],
+                'raw' => '{"message":"internal api execution failed"}',
+                'error' => $e->getMessage(),
+                'transport' => 'internal',
+            ];
+        }
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function buildApiCallCandidates(string $url): array
+    {
+        $candidates = [$url];
+        $parts = parse_url($url);
+        if (!is_array($parts)) {
+            return $candidates;
+        }
+
+        $host = strtolower((string) ($parts['host'] ?? ''));
+        if (!$this->isLocalLikeHost($host)) {
+            return $candidates;
+        }
+
+        $baseUrls = [];
+        $configuredBase = trim((string) config('services.rule.internal_base_url', ''));
+        if ($configuredBase !== '') {
+            $baseUrls[] = $configuredBase;
+        }
+
+        $appUrl = trim((string) config('app.url', ''));
+        if ($appUrl !== '') {
+            $baseUrls[] = $appUrl;
+        }
+
+        $baseUrls[] = 'http://nginx';
+        $baseUrls[] = 'http://host.containers.internal:9001';
+
+        $podmanGateway = trim((string) env('PODMAN_HOST_GATEWAY_IP', ''));
+        if ($podmanGateway !== '') {
+            $baseUrls[] = sprintf('http://%s:9001', $podmanGateway);
+        }
+
+        foreach ($baseUrls as $baseUrl) {
+            $rewritten = $this->rewriteUrlBase($url, $baseUrl);
+            if ($rewritten !== null && !in_array($rewritten, $candidates, true)) {
+                $candidates[] = $rewritten;
+            }
+        }
+
+        return $candidates;
+    }
+
+    private function isLocalLikeHost(string $host): bool
+    {
+        return in_array($host, ['127.0.0.1', 'localhost', 'nginx'], true);
+    }
+
+    private function rewriteUrlBase(string $url, string $baseUrl): ?string
+    {
+        $target = parse_url($url);
+        $base = parse_url($baseUrl);
+        if (!is_array($target) || !is_array($base)) {
+            return null;
+        }
+
+        $scheme = (string) ($base['scheme'] ?? '');
+        $host = (string) ($base['host'] ?? '');
+        if ($scheme === '' || $host === '') {
+            return null;
+        }
+
+        $port = isset($base['port']) ? ':' . $base['port'] : '';
+        $path = (string) ($target['path'] ?? '/');
+        if ($path === '') {
+            $path = '/';
+        }
+        $query = isset($target['query']) ? '?' . $target['query'] : '';
+        $fragment = isset($target['fragment']) ? '#' . $target['fragment'] : '';
+
+        return sprintf('%s://%s%s%s%s%s', $scheme, $host, $port, $path, $query, $fragment);
     }
 
     private function decodeDataMap(?string $dataMap): array
@@ -95,6 +305,13 @@ class RuleActionExecutor
                 return (string) $context[$key];
             }
 
+            $resolved = $this->resolveFromArrayPath($context, $key);
+            if ($resolved !== null) {
+                return is_scalar($resolved) || $resolved === null
+                    ? (string) ($resolved ?? '')
+                    : (string) json_encode($resolved, JSON_UNESCAPED_UNICODE);
+            }
+
             if (ctype_digit($key)) {
                 $idx = (int) $key;
                 return (string) ($matches[$idx] ?? '');
@@ -102,5 +319,32 @@ class RuleActionExecutor
 
             return (string) ($matches[$key] ?? '');
         }, $template);
+    }
+
+    private function resolveFromArrayPath(array $data, string $path): mixed
+    {
+        if ($path === '' || !str_contains($path, '.')) {
+            return null;
+        }
+
+        $current = $data;
+        foreach (explode('.', $path) as $segment) {
+            if (!is_array($current) || !array_key_exists($segment, $current)) {
+                return null;
+            }
+            $current = $current[$segment];
+        }
+
+        return $current;
+    }
+
+    private function normalizeMethod(mixed $value): string
+    {
+        if (!is_string($value) || trim($value) === '') {
+            return 'POST';
+        }
+
+        $method = strtoupper(trim($value));
+        return in_array($method, ['PATCH', 'POST', 'GET', 'DELETE'], true) ? $method : 'POST';
     }
 }
