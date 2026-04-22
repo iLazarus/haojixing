@@ -14,7 +14,7 @@ class LedgerStoreRequest extends ApiFormRequest
     public function rules(): array
     {
         return [
-            'tg_gid' => ['required', 'integer', 'min:1'],
+            'tg_gid' => ['required', 'integer', 'not_in:0'],
             'tg_uid' => ['required', 'integer', 'min:1'],
             'tg_nickname' => ['sometimes', 'nullable', 'string', 'max:255'],
             'tg_belong_uid' => ['required', 'integer', 'min:1'],
