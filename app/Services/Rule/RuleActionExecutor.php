@@ -10,6 +10,7 @@ use App\Models\TgUser;
 use App\Services\Group\GroupSyncService;
 use App\Services\Group\GroupService;
 use App\Services\Ledger\LedgerService;
+use App\Services\Member\MemberService;
 use App\Models\AppRule;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -22,6 +23,7 @@ class RuleActionExecutor
         private readonly GroupService $groupService,
         private readonly LedgerService $ledgerService,
         private readonly GroupSyncService $groupSyncService,
+        private readonly MemberService $memberService,
     ) {
     }
 
@@ -307,6 +309,82 @@ class RuleActionExecutor
             }
         }
 
+        if ($method === 'POST' && preg_match('#^/api/v1/groups/(-?\d+)/members/set-operator$#', $path, $matches) === 1) {
+            try {
+                $tgGid = $this->normalizeGidValue($matches[1]);
+                $triggerTgUid = $this->normalizeUidValue($payload['trigger_tg_uid'] ?? null, $tgGid);
+                $targetTgUid = $this->normalizeUidValue($payload['target_tg_uid'] ?? null, $tgGid);
+
+                if ($tgGid === null || $tgGid <= 0 || $triggerTgUid === null || $triggerTgUid <= 0 || $targetTgUid === null || $targetTgUid <= 0) {
+                    return [
+                        'method' => $method,
+                        'url' => $url,
+                        'status' => 422,
+                        'ok' => false,
+                        'body' => ['message' => '参数不完整，缺少 tg_gid/trigger_tg_uid/target_tg_uid'],
+                        'raw' => '{"message":"参数不完整，缺少 tg_gid/trigger_tg_uid/target_tg_uid"}',
+                        'transport' => 'internal',
+                    ];
+                }
+
+                if (!$this->isLedgerOperatorMember($tgGid, $triggerTgUid)) {
+                    return [
+                        'method' => $method,
+                        'url' => $url,
+                        'status' => 403,
+                        'ok' => false,
+                        'body' => ['message' => '仅 operator 可以设置操作员'],
+                        'raw' => '{"message":"仅 operator 可以设置操作员"}',
+                        'transport' => 'internal',
+                    ];
+                }
+
+                $member = $this->memberService->updateOne($tgGid, $targetTgUid, [
+                    'role' => AppMember::ROLE_OPERATOR,
+                ]);
+
+                if ($member === null) {
+                    return [
+                        'method' => $method,
+                        'url' => $url,
+                        'status' => 404,
+                        'ok' => false,
+                        'body' => ['message' => 'member not found'],
+                        'raw' => '{"message":"member not found"}',
+                        'transport' => 'internal',
+                    ];
+                }
+
+                $body = $member->toArray();
+                return [
+                    'method' => $method,
+                    'url' => $url,
+                    'status' => 200,
+                    'ok' => true,
+                    'body' => $body,
+                    'raw' => (string) json_encode($body, JSON_UNESCAPED_UNICODE),
+                    'transport' => 'internal',
+                ];
+            } catch (Throwable $e) {
+                Log::channel('stderr')->warning('rule_api_internal_call_failed', [
+                    'method' => $method,
+                    'url' => $url,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return [
+                    'method' => $method,
+                    'url' => $url,
+                    'status' => 500,
+                    'ok' => false,
+                    'body' => ['message' => 'internal api execution failed'],
+                    'raw' => '{"message":"internal api execution failed"}',
+                    'error' => $e->getMessage(),
+                    'transport' => 'internal',
+                ];
+            }
+        }
+
         return null;
     }
 
@@ -321,6 +399,35 @@ class RuleActionExecutor
         }
 
         $path = (string) ($parts['path'] ?? '');
+        if ($method === 'POST' && preg_match('#^/api/v1/groups/(-?\d+)/members/set-operator$#', $path, $matches) === 1) {
+            $tgGid = $this->normalizeGidValue($matches[1]);
+            if ($tgGid === null || $tgGid <= 0) {
+                return ['ok' => false, 'error' => 'tg_gid 缺失或无效'];
+            }
+
+            $triggerUid = $this->normalizeUidValue($payload['trigger_tg_uid'] ?? ($payload['tg_uid'] ?? null), $tgGid);
+            if ($triggerUid === null || $triggerUid <= 0) {
+                return ['ok' => false, 'error' => 'trigger_tg_uid 缺失或无效'];
+            }
+
+            if (!$this->isLedgerOperatorMember($tgGid, $triggerUid)) {
+                return ['ok' => false, 'error' => '仅 operator 可以设置操作员', 'suppress_reply' => true];
+            }
+
+            $targetUid = $this->normalizeUidValue($payload['target_tg_uid'] ?? ($payload['target_username'] ?? null), $tgGid);
+            if ($targetUid === null || $targetUid <= 0) {
+                return ['ok' => false, 'error' => '目标用户不存在或未同步，请先让 @username 发言后再试'];
+            }
+
+            return [
+                'ok' => true,
+                'payload' => [
+                    'trigger_tg_uid' => $triggerUid,
+                    'target_tg_uid' => $targetUid,
+                ],
+            ];
+        }
+
         if ($method !== 'POST' || preg_match('#^/api/v1/ledgers$#', $path) !== 1) {
             return ['ok' => true, 'payload' => $payload];
         }
@@ -331,7 +438,7 @@ class RuleActionExecutor
             return ['ok' => false, 'error' => 'tg_gid 缺失或无效'];
         }
 
-        $next['tg_uid'] = $this->normalizeUidValue($next['tg_uid'] ?? null);
+        $next['tg_uid'] = $this->normalizeUidValue($next['tg_uid'] ?? null, (int) $next['tg_gid']);
         if ($next['tg_uid'] === null || $next['tg_uid'] <= 0) {
             return ['ok' => false, 'error' => 'tg_uid 缺失或无效'];
         }
@@ -340,7 +447,7 @@ class RuleActionExecutor
             return ['ok' => false, 'error' => '仅 operator 角色可以记账', 'suppress_reply' => true];
         }
 
-        $replyToUid = $this->normalizeUidValue($context['reply_to_tg_uid'] ?? null);
+        $replyToUid = $this->normalizeUidValue($context['reply_to_tg_uid'] ?? null, (int) $next['tg_gid']);
         if ($replyToUid !== null && $replyToUid > 0) {
             $next['tg_belong_uid'] = $replyToUid;
         }
@@ -349,7 +456,7 @@ class RuleActionExecutor
         if ($belongRaw === null || (is_string($belongRaw) && trim($belongRaw) === '')) {
             $next['tg_belong_uid'] = $next['tg_uid'];
         } else {
-            $resolvedBelongUid = $this->normalizeUidValue($belongRaw);
+            $resolvedBelongUid = $this->normalizeUidValue($belongRaw, (int) $next['tg_gid']);
             if ($resolvedBelongUid === null || $resolvedBelongUid <= 0) {
                 return ['ok' => false, 'error' => 'tg_belong_uid 无法解析，请确认 @username 已同步到 tg_user'];
             }
@@ -550,7 +657,7 @@ class RuleActionExecutor
         return abs((int) $text);
     }
 
-    private function normalizeUidValue(mixed $value): ?int
+    private function normalizeUidValue(mixed $value, ?int $tgGid = null): ?int
     {
         if (is_int($value)) {
             return $value;
@@ -578,12 +685,24 @@ class RuleActionExecutor
             return null;
         }
 
-        $user = TgUser::query()
-            ->select(['tg_uid'])
-            ->where('tg_username', $username)
-            ->first();
+        $user = $this->resolveUserByUsername($username, $tgGid);
 
         return $user?->tg_uid !== null ? (int) $user->tg_uid : null;
+    }
+
+    private function resolveUserByUsername(string $username, ?int $tgGid = null): ?TgUser
+    {
+        $normalized = trim($username);
+        if ($normalized === '') {
+            return null;
+        }
+
+        $query = TgUser::query()
+            ->select(['tg_user.tg_uid'])
+            ->whereRaw('LOWER(tg_user.tg_username) = ?', [strtolower($normalized)]);
+
+        $user = $query->first();
+        return $user instanceof TgUser ? $user : null;
     }
 
     /**
