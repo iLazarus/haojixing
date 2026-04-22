@@ -168,54 +168,6 @@ class TelegramWebhookController extends Controller
 
             $this->logIncomingGroupMessage($rawGroupId, $tgMsgId, $text, $context);
 
-            if ($this->isRefreshCommand($text)) {
-                $senderUid = $this->toIntOrNull($message['from']['id'] ?? null);
-                if (!$this->groupSyncService->isGroupOwner($rawGroupId, $senderUid)) {
-                    $this->sendTelegramTextMessage($rawGroupId, '仅群主可以执行刷新', 'manual_refresh_forbidden');
-                    $this->markInboxResult('已处理', '刷新被拒绝', null, [
-                        '处理场景' => '手动刷新',
-                        '处理说明' => '发送人不是群主，系统拒绝执行刷新',
-                    ]);
-
-                    return response()->json([
-                        'ok' => true,
-                        'ignored' => 'refresh_forbidden',
-                    ]);
-                }
-
-                $seedUsers = [];
-                $this->collectVisibleUsersFromPayload($seedUsers, $payload);
-                $syncResult = $this->groupSyncService->refresh(
-                    $rawGroupId,
-                    $senderUid,
-                    (string) ($context['sender'] ?? ''),
-                    $seedUsers,
-                    (string) ($context['chat_title'] ?? ''),
-                );
-
-                Log::channel('stderr')->info('telegram_manual_refresh_finished', [
-                    'tg_gid' => $rawGroupId,
-                    'tg_uid' => $senderUid,
-                    'sync_result' => $syncResult,
-                ]);
-
-                $this->sendTelegramTextMessage($rawGroupId, '已刷新群信息、用户信息和成员信息', 'manual_refresh_done');
-                $this->markInboxResult('已处理', '手动刷新完成', null, [
-                    '处理场景' => '手动刷新',
-                    '处理说明' => '已完成群与成员同步',
-                    '刷新结果' => $syncResult,
-                ]);
-
-                return response()->json([
-                    'ok' => true,
-                    'matched' => 0,
-                    'replied' => true,
-                    'data' => [
-                        'sync' => $syncResult,
-                    ],
-                ]);
-            }
-
         $result = $this->ruleMatchingService->match(
             $rawGroupId,
             $tgMsgId,
@@ -532,11 +484,6 @@ class TelegramWebhookController extends Controller
             'candidate_count' => count($users),
             'sync_result' => $syncResult,
         ]);
-    }
-
-    private function isRefreshCommand(string $text): bool
-    {
-        return trim($text) === '刷新';
     }
 
     private function collectVisibleUsersFromPayload(array &$users, array $payload): void

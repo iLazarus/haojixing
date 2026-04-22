@@ -87,14 +87,7 @@ class RuleActionExecutor
         if ($apiResult !== null) {
             $runtimeContext['api_result'] = $apiResult;
             if (is_array($apiResult['body'] ?? null)) {
-                $resultBody = $apiResult['body'];
-
-                // 兼容模板 {{result.data.id}}：内部调用返回原始模型时补齐 data 包裹层。
-                if (!array_key_exists('data', $resultBody)) {
-                    $resultBody['data'] = $apiResult['body'];
-                }
-
-                $runtimeContext['result'] = $resultBody;
+                $runtimeContext['result'] = $apiResult['body'];
             }
         }
 
@@ -310,12 +303,6 @@ class RuleActionExecutor
                 return [
                     'method' => $method,
                     'url' => $url,
-                    'status' => 500,
-                    'ok' => false,
-                    'body' => ['message' => 'internal api execution failed'],
-                    'raw' => '{"message":"internal api execution failed"}',
-                    'error' => $e->getMessage(),
-                    'transport' => 'internal',
                 ];
             }
         }
